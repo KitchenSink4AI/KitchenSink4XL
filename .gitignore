@@ -1,0 +1,22 @@
+# Environment / caches
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# Backups created by the server (two-slot folders next to each workbook)
+.ks4xl-backups/
+
+# Fixture build byproducts, never fixtures.
+tests/fixtures/samples/_*
+
+# Build artifacts
+dist/
+build/
+
+# Packed bundles ship as release assets, not commits.
+bundle/*.mcpb
+
+# Scratch
+temp/
