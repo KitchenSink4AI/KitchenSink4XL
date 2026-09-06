@@ -48,7 +48,10 @@ from fastmcp.tools.tool import ToolResult as _FmcpToolResult
 from . import __version__
 from . import envelope as _envelope
 from . import packs as _packs
+from .core import package as _package
 from .core import readonly as _readonly
+from .core import schemas as _schemas
+from .core import sandbox as _sandbox
 from .core import update_check as _upd
 from .core.errors import XlMcpError as _XlMcpError
 from .ops import annotations as _annotations
@@ -78,6 +81,10 @@ from .ops import workflows as _workflows
 
 mcp = FastMCP(
     "kitchensink4xl",
+    # Without this the MCP handshake reports fastmcp's own version as
+    # serverInfo.version, so every client log and every registry scrape
+    # carries the framework's number instead of this package's.
+    version=__version__,
     instructions=(
         "Kitchen-sink Microsoft Excel (.xlsx) editor: cells and ranges, "
         "formulas with an honest cached-value story, server-side query and "
@@ -86,8 +93,10 @@ mcp = FastMCP(
         "hyperlinks, CSV/TSV/JSON import and export. Positional tools take "
         "one location object (cell | range | r1c1 | name | table | "
         "used_range | region | search | anchor; an optional 'sheet' key picks "
-        "the sheet, default active); ambiguous matches refuse loudly with "
-        "every candidate. File-based with a round-trip hazard scan, "
+        "the sheet, default active), for example {\"cell\": \"B7\", \"sheet\": "
+        "\"Q3\"}, {\"range\": \"A1:C10\"} or {\"region\": {\"near\": \"B7\"}}, "
+        "with a bare 'B7' or 'A1:C10' string as shorthand; ambiguous matches "
+        "refuse loudly with every candidate. File-based with a round-trip hazard scan, "
         "auto-backup before every mutation, and verify-after-write; a "
         "workbook open in Excel refuses rather than risking the open copy. "
         "Sessions start lite; enable_tools loads optional packs, including "
@@ -182,11 +191,13 @@ def _tool(pack: str):
 @_tool("lite")
 def get_server_info() -> dict:
     """Report the KitchenSink4XL server build: version, the active tool
-    surface (enabled tool count and approximate token bill), the available
-    optional packs, and the host platform and Python. A read-only orient
-    call that needs no workbook and touches no file; use it to confirm the
-    server is reachable and to see which packs are currently loaded before
-    deciding whether to call enable_tools."""
+    surface (enabled tool count and approximate token bill), the optional
+    packs, the host platform and Python, and config, which carries the
+    install settings a user otherwise cannot confirm arrived: whether path
+    sandboxing is on with how many roots (a count, never the paths), and
+    whether saves deep-verify through Excel. A read-only orient call that
+    needs no workbook and touches no file; use it to confirm the server is
+    up and see which packs are loaded."""
     out = {
         "name": "kitchensink4xl",
         "version": __version__,
@@ -195,6 +206,11 @@ def get_server_info() -> dict:
         "packs_available": _packs.pack_names(),
         "platform": _platform.platform(),
         "python": _sys.version.split()[0],
+        "config": {
+            "sandbox_active": _sandbox.active(),
+            "allowed_roots_count": _sandbox.root_count(),
+            "verify_com_default": _package.com_verify_default(),
+        },
     }
     # The server's one and only update surface: a cached line, added when a
     # newer stable release exists. Reads no network and never raises.
@@ -305,7 +321,7 @@ def manage_worksheet(path: str, action: str, sheet: str | None = None,
 
 
 @_tool("lite")
-def read_range(path: str, location: Any, values: str = "cached",
+def read_range(path: str, location: _schemas.Location, values: str = "cached",
                sheet: str | None = None) -> dict:
     """Read a cell or range addressed by a location object (cell, range, r1c1,
     name, table, used_range, region, search, or a grid-view anchor; sheet
@@ -318,9 +334,9 @@ def read_range(path: str, location: Any, values: str = "cached",
 
 
 @_tool("lite")
-def set_cell(path: str, location: Any, value: Any, sheet: str | None = None,
-             allow_loss: bool = False, backup: bool = True,
-             verify_com: bool | None = None) -> dict:
+def set_cell(path: str, location: _schemas.Location, value: _schemas.CellValue,
+             sheet: str | None = None, allow_loss: bool = False,
+             backup: bool = True, verify_com: bool | None = None) -> dict:
     """Write a single cell addressed by a location object. A string beginning
     with '=' is ALWAYS stored as a formula (there is no literal escape),
     normalized so modern functions do not land as #NAME? and flagged to
@@ -334,9 +350,9 @@ def set_cell(path: str, location: Any, value: Any, sheet: str | None = None,
 
 
 @_tool("lite")
-def write_range(path: str, location: Any, data: list[list[Any]],
-                sheet: str | None = None, allow_loss: bool = False,
-                backup: bool = True,
+def write_range(path: str, location: _schemas.Location,
+                data: _schemas.CellMatrix, sheet: str | None = None,
+                allow_loss: bool = False, backup: bool = True,
                 verify_com: bool | None = None) -> dict:
     """Write a 2D block of values and formulas anchored at the location's
     top-left cell. data is a list of row lists and must be RECTANGULAR:
@@ -352,7 +368,7 @@ def write_range(path: str, location: Any, data: list[list[Any]],
 
 
 @_tool("lite")
-def clear_range(path: str, location: Any, what: str = "contents",
+def clear_range(path: str, location: _schemas.Location, what: str = "contents",
                 sheet: str | None = None, allow_loss: bool = False,
                 backup: bool = True,
                 verify_com: bool | None = None) -> dict:
@@ -369,7 +385,8 @@ def clear_range(path: str, location: Any, what: str = "contents",
 
 
 @_tool("lite")
-def copy_range(path: str, source: Any, dest: Any, what: str = "all",
+def copy_range(path: str, source: _schemas.SourceLocation,
+               dest: _schemas.DestLocation, what: str = "all",
                adjust_formulas: bool = True, sheet: str | None = None,
                allow_loss: bool = False, backup: bool = True,
                verify_com: bool | None = None) -> dict:
@@ -388,7 +405,8 @@ def copy_range(path: str, source: Any, dest: Any, what: str = "all",
 
 
 @_tool("lite")
-def move_range(path: str, source: Any, dest: Any, sheet: str | None = None,
+def move_range(path: str, source: _schemas.SourceLocation,
+               dest: _schemas.DestLocation, sheet: str | None = None,
                allow_loss: bool = False, backup: bool = True,
                verify_com: bool | None = None) -> dict:
     """Move a rectangle to a new anchor on the same sheet, rewriting every
@@ -404,26 +422,27 @@ def move_range(path: str, source: Any, dest: Any, sheet: str | None = None,
 
 
 @_tool("lite")
-def query_range(path: str, location: Any = None, sheet: str | None = None,
-                header: bool = True, columns: list | None = None,
-                where: list | None = None, match: str = "all",
-                order_by: list | None = None, aggregate: list | None = None,
-                group_by: Any = None, limit: int | None = None,
-                offset: int = 0, distinct: bool = False,
-                records: bool = False, values: str = "cached") -> dict:
+def query_range(path: str, location: _schemas.OptionalLocation = None,
+                sheet: str | None = None, header: bool = True,
+                columns: _schemas.ColumnList = None,
+                where: _schemas.Predicates = None, match: str = "all",
+                order_by: _schemas.OrderBy = None,
+                aggregate: _schemas.Aggregates = None,
+                group_by: _schemas.GroupBy = None, limit: int | None = None,
+                offset: int = 0, distinct: bool = False, records: bool = False,
+                values: str = "cached") -> dict:
     """Filter, project, sort, paginate, and aggregate a range SERVER-SIDE so an
     agent reads only the rows and columns it needs instead of a whole sheet.
 
-    location defaults to the sheet's true used range. With header=true the first
-    row names the columns (referenced by name; otherwise by A1 letter). where is
-    a list of {column, op, value} predicates joined by match ('all' or 'any');
+    location defaults to the sheet's true used range. With header=true the
+    first row names the columns (otherwise the A1 letter does). where is a
+    list of {column, op, value} predicates joined by match ('all' or 'any');
     ops: eq, ne, gt, ge, lt, le, contains, startswith, endswith, regex, in,
     not_in, is_blank, not_blank. columns projects a subset; order_by is a list
     of {column, dir} specs (unknown directions refuse); offset and limit page;
     distinct dedupes. aggregate is a list of {column, func} (count,
     count_nonblank, count_distinct, sum, avg, min, max, first, last),
-    optionally per group_by, returning group summaries (records=true
-    emits objects).
+    optionally per group_by (records=true emits objects).
 
     Semantics: predicates read CACHED and literal values (uncalculated
     formulas read as blank; recalc for exact results); gt/ge/lt/le compare
@@ -432,7 +451,9 @@ def query_range(path: str, location: Any = None, sheet: str | None = None,
     Aggregates follow Excel: sum/avg/min/max consume NUMERIC cells only
     (text and booleans ignored even when text looks numeric; exclusions
     are reported); count is the RAW row count, unlike Excel COUNT; min/max
-    fall back to text when no numbers exist. Read-only."""
+    fall back to text when no numbers exist. Filter-hidden rows are read
+    and aggregated like any other row, unlike SUBTOTAL; use where to drop
+    them. Read-only."""
     return _cells.query_range(
         path, location=location, sheet=sheet, header=header, columns=columns,
         where=where, match=match, order_by=order_by, aggregate=aggregate,
@@ -444,9 +465,9 @@ def query_range(path: str, location: Any = None, sheet: str | None = None,
 
 
 @_tool("lite")
-def get_grid_view(path: str, location: Any = None, sheet: str | None = None,
-                  max_rows: int = 50, max_cols: int = 30,
-                  values: str = "cached") -> dict:
+def get_grid_view(path: str, location: _schemas.OptionalLocation = None,
+                  sheet: str | None = None, max_rows: int = 50,
+                  max_cols: int = 30, values: str = "cached") -> dict:
     """A compact, token-efficient projection of a sheet or range: the true used
     range, a markdown table with A1 addressing (column letters across the top,
     row numbers down the side), formula and merged-cell markers, dimensions, and
@@ -470,7 +491,7 @@ def get_grid_view(path: str, location: Any = None, sheet: str | None = None,
 
 
 @_tool("lite")
-def apply_edits(path: str, edits: list, allow_loss: bool = False,
+def apply_edits(path: str, edits: _schemas.BatchEdits, allow_loss: bool = False,
                 backup: bool = True,
                 verify_com: bool | None = None) -> dict:
     """Apply many addressed edits as ONE atomic batch. edits is a list of
@@ -496,11 +517,11 @@ def apply_edits(path: str, edits: list, allow_loss: bool = False,
 
 
 @_tool("lite")
-def format_cells(path: str, location: Any, number_format: str | None = None,
-                 font: dict | None = None, fill: dict | None = None,
-                 border: dict | None = None, alignment: dict | None = None,
-                 sheet: str | None = None, allow_loss: bool = False,
-                 backup: bool = True,
+def format_cells(path: str, location: _schemas.Location,
+                 number_format: str | None = None, font: dict | None = None,
+                 fill: dict | None = None, border: dict | None = None,
+                 alignment: dict | None = None, sheet: str | None = None,
+                 allow_loss: bool = False, backup: bool = True,
                  verify_com: bool | None = None) -> dict:
     """Apply formatting to a range, merging onto the existing style so
     unspecified attributes are preserved. number_format is an Excel format
@@ -520,23 +541,38 @@ def format_cells(path: str, location: Any, number_format: str | None = None,
 def set_dimensions(path: str, sheet: str | None = None,
                    column_widths: dict | None = None,
                    row_heights: dict | None = None,
-                   autofit_columns: list | None = None,
-                   hide_columns: list | None = None,
-                   hide_rows: list | None = None,
+                   autofit_columns: _schemas.ColumnNames = None,
+                   hide_columns: _schemas.ColumnNames = None,
+                   hide_rows: _schemas.RowNumbers = None,
+                   group_rows: _schemas.OutlineSpans = None,
+                   group_columns: _schemas.OutlineSpans = None,
+                   ungroup_rows: _schemas.OutlineSpans = None,
+                   ungroup_columns: _schemas.OutlineSpans = None,
+                   outline_summary: dict | None = None,
                    allow_loss: bool = False, backup: bool = True,
                    verify_com: bool | None = None) -> dict:
-    """Set column widths and row heights, hide rows or columns, and service an
-    autofit request. column_widths maps column letters or indices to widths in
-    Excel character units; row_heights maps row numbers to heights in points;
-    autofit_columns sizes columns to content as a best-effort APPROXIMATION
-    (true autofit needs Excel via the com pack). A hazardous workbook refuses
-    unless allow_loss is true. Auto-backup to .ks4xl-backups; atomic verified
-    save. Refuses while open in Excel."""
+    """Set column widths and row heights, hide rows or columns, group them
+    into collapsible outline levels, and service an autofit request.
+    column_widths maps column letters or indices to widths in Excel character
+    units; row_heights maps row numbers to heights in points; autofit_columns
+    sizes columns to content as a best-effort APPROXIMATION (true autofit
+    needs Excel via the com pack).
+
+    Grouping is Excel's outline: group_rows and group_columns take spans of
+    {start, end, level 1-7, collapsed}, the collapse bracket a budget or
+    financial model is built around; ungroup_rows and ungroup_columns clear
+    a span's level and unhide it; outline_summary {below, right} says which
+    side the total sits on. Read the current outline back from
+    get_workbook_metadata, which reports it per sheet when a sheet has one.
+    A hazardous workbook refuses unless allow_loss is true. Auto-backup to
+    .ks4xl-backups; atomic verified save. Refuses while open in Excel."""
     return _format.set_dimensions(
         path, sheet=sheet, column_widths=column_widths, row_heights=row_heights,
         autofit_columns=autofit_columns, hide_columns=hide_columns,
-        hide_rows=hide_rows, allow_loss=allow_loss, backup=backup,
-            verify_com=verify_com)
+        hide_rows=hide_rows, group_rows=group_rows,
+        group_columns=group_columns, ungroup_rows=ungroup_rows,
+        ungroup_columns=ungroup_columns, outline_summary=outline_summary,
+        allow_loss=allow_loss, backup=backup, verify_com=verify_com)
 
 
 # ====================================== TABLES, NAMES, SORT, I/O TOOLS
@@ -552,12 +588,12 @@ def set_dimensions(path: str, sheet: str | None = None,
 
 
 @_tool("lite")
-def create_table(path: str, location: Any, name: str, header: bool = True,
-                 style: str = "TableStyleMedium9", row_stripes: bool = True,
-                 col_stripes: bool = False, totals_row: bool = False,
-                 totals: dict | None = None, sheet: str | None = None,
-                 allow_loss: bool = False, backup: bool = True,
-                 verify_com: bool | None = None) -> dict:
+def create_table(path: str, location: _schemas.Location, name: str,
+                 header: bool = True, style: str = "TableStyleMedium9",
+                 row_stripes: bool = True, col_stripes: bool = False,
+                 totals_row: bool = False, totals: dict | None = None,
+                 sheet: str | None = None, allow_loss: bool = False,
+                 backup: bool = True, verify_com: bool | None = None) -> dict:
     """Turn a range into an Excel table (ListObject) named name. With header
     true the first row supplies the column names (deduplicated); style is a
     built-in style; row_stripes and col_stripes toggle banding. totals maps
@@ -574,7 +610,8 @@ def create_table(path: str, location: Any, name: str, header: bool = True,
 
 
 @_tool("lite")
-def get_table(path: str, name: str, columns: list | None = None,
+def get_table(path: str, name: str,
+              columns: _schemas.TableColumns = None,
               values: str = "cached", records: bool = False) -> dict:
     """Read a table's data by its name (case-insensitive). columns projects a
     subset; values is cached | formula | both (the honest calc story);
@@ -588,7 +625,8 @@ def get_table(path: str, name: str, columns: list | None = None,
 
 
 @_tool("design")
-def manage_table(path: str, name: str, action: str, values: list | None = None,
+def manage_table(path: str, name: str, action: str,
+                 values: _schemas.TableValues = None,
                  index: int | None = None, column: str | None = None,
                  new_name: str | None = None, new_ref: str | None = None,
                  style: str | None = None, on: bool = True,
@@ -647,26 +685,31 @@ def manage_name(path: str, action: str, name: str | None = None,
 
 
 @_tool("design")
-def manage_conditional_format(path: str, action: str, location: Any = None,
+def manage_conditional_format(path: str, action: str,
+                              location: _schemas.OptionalLocation = None,
                               cf_type: str | None = None,
                               params: dict | None = None,
                               sheet: str | None = None,
                               index: int | None = None,
-                              allow_loss: bool = False,
-                              backup: bool = True,
+                              allow_loss: bool = False, backup: bool = True,
                               verify_com: bool | None = None) -> dict:
     """Manage conditional-formatting rules. action is add, list (read-only), or
     delete. For add, location is the range and cf_type picks the rule with its
     params: cell_is {operator, formula (a value or [lo, hi]), fill,
     font_color}; formula {formula, fill}; color_scale {colors: 2 or 3 hex
     stops}; data_bar {color, show_value}; icon_set {icon_style, values,
-    show_value, reverse}; top_bottom {rank, percent, bottom, fill}. For
-    delete, location must EXACTLY match the rule's stored range (or one member
-    of it) and an optional index picks one rule of several. The file stores
-    the rule declaratively; Excel evaluates it and paints the cells on open,
-    like the calc story. For the mutating actions: a hazardous workbook
-    refuses unless allow_loss is true; auto-backup to prev/anchor slots in
-    .ks4xl-backups; atomic verified save. Refuses while open in Excel."""
+    show_value, reverse}; top_bottom {rank, percent, bottom, fill}; unique and
+    duplicate {fill, font_color}; above_average {below, equal_average, std_dev
+    1-3, fill, font_color}; time_period {period: today | yesterday | tomorrow
+    | last7Days | thisWeek | lastWeek | nextWeek | thisMonth | lastMonth |
+    nextMonth, fill}; blanks and errors {fill, font_color}. For delete,
+    location must EXACTLY match the rule's stored range (or one member of it)
+    and an optional index picks one rule of several. The file stores the rule
+    declaratively; Excel evaluates it and paints the cells on open, like the
+    calc story, so a time_period rule follows the reader's clock. For the
+    mutating actions: a hazardous workbook refuses unless allow_loss is true;
+    auto-backup to prev/anchor slots in .ks4xl-backups; atomic verified save.
+    Refuses while open in Excel."""
     return _condformat.manage_conditional_format(
         path, action, location=location, cf_type=cf_type, params=params,
         sheet=sheet, index=index, allow_loss=allow_loss, backup=backup,
@@ -677,14 +720,16 @@ def manage_conditional_format(path: str, action: str, location: Any = None,
 
 
 @_tool("design")
-def manage_data_validation(path: str, action: str, location: Any = None,
-                           dv_type: str | None = None, values: Any = None,
+def manage_data_validation(path: str, action: str,
+                           location: _schemas.OptionalLocation = None,
+                           dv_type: str | None = None,
+                           values: _schemas.DvValues = None,
                            operator: str | None = None,
-                           formula1: Any = None, formula2: Any = None,
+                           formula1: _schemas.DvFormula = None,
+                           formula2: _schemas.DvFormula = None,
                            allow_blank: bool = True, prompt: str | None = None,
                            error: str | None = None, sheet: str | None = None,
-                           allow_loss: bool = False,
-                           backup: bool = True,
+                           allow_loss: bool = False, backup: bool = True,
                            verify_com: bool | None = None) -> dict:
     """Manage data-validation rules. action is add, list (read-only), or
     delete. For add, location is the range and dv_type is one of list, whole,
@@ -709,9 +754,9 @@ def manage_data_validation(path: str, action: str, location: Any = None,
 
 
 @_tool("lite")
-def sort_range(path: str, location: Any, keys: list, has_header: bool = True,
-               sheet: str | None = None, allow_loss: bool = False,
-               backup: bool = True,
+def sort_range(path: str, location: _schemas.Location, keys: _schemas.SortKeys,
+               has_header: bool = True, sheet: str | None = None,
+               allow_loss: bool = False, backup: bool = True,
                verify_com: bool | None = None) -> dict:
     """Sort a range or table body by one or more keys, writing the rows back
     reordered. keys is a list of {column, order}: header name, letter, or
@@ -727,9 +772,9 @@ def sort_range(path: str, location: Any, keys: list, has_header: bool = True,
 
 
 @_tool("lite")
-def set_filter(path: str, location: Any, criteria: list | None = None,
-               sheet: str | None = None, allow_loss: bool = False,
-               backup: bool = True,
+def set_filter(path: str, location: _schemas.Location,
+               criteria: _schemas.FilterCriteria = None, sheet: str | None = None,
+               allow_loss: bool = False, backup: bool = True,
                verify_com: bool | None = None) -> dict:
     """Apply an autofilter over a range whose first row is the header, and
     actually hide the non-matching rows: an .xlsx stores filter CRITERIA, not
@@ -745,9 +790,9 @@ def set_filter(path: str, location: Any, criteria: list | None = None,
 
 
 @_tool("lite")
-def clear_filter(path: str, location: Any = None, sheet: str | None = None,
-                 allow_loss: bool = False, backup: bool = True,
-                 verify_com: bool | None = None) -> dict:
+def clear_filter(path: str, location: _schemas.OptionalLocation = None,
+                 sheet: str | None = None, allow_loss: bool = False,
+                 backup: bool = True, verify_com: bool | None = None) -> dict:
     """Remove the autofilter from a sheet and unhide the rows it hid, the
     reverse of set_filter. location or sheet picks the sheet; the sheet's
     active autofilter range is used when location is omitted. A sheet with no
@@ -764,11 +809,11 @@ def clear_filter(path: str, location: Any = None, sheet: str | None = None,
 
 
 @_tool("io")
-def manage_comment(path: str, action: str, location: Any = None,
+def manage_comment(path: str, action: str,
+                   location: _schemas.OptionalLocation = None,
                    text: str | None = None, author: str | None = None,
                    sheet: str | None = None, allow_loss: bool = False,
-                   backup: bool = True,
-                   verify_com: bool | None = None) -> dict:
+                   backup: bool = True, verify_com: bool | None = None) -> dict:
     """Manage legacy cell comments (the sticky notes). action is add (location,
     text, optional author), edit (location, new text or author), delete
     (location), or list (read-only; every comment with its cell, text, and
@@ -787,7 +832,8 @@ def manage_comment(path: str, action: str, location: Any = None,
 
 
 @_tool("lite")
-def manage_hyperlink(path: str, action: str, location: Any = None,
+def manage_hyperlink(path: str, action: str,
+                     location: _schemas.OptionalLocation = None,
                      target: str | None = None, display: str | None = None,
                      tooltip: str | None = None, sheet: str | None = None,
                      allow_loss: bool = False, backup: bool = True,
@@ -813,11 +859,11 @@ def manage_hyperlink(path: str, action: str, location: Any = None,
 @_tool("lite")
 def import_data(path: str, source: str | None = None,
                 source_file: str | None = None, fmt: str = "auto",
-                location: Any = None, sheet: str | None = None,
-                header: bool = True, delimiter: str | None = None,
-                encoding: str = "utf-8", formulas: bool = False,
-                allow_loss: bool = False, backup: bool = True,
-                verify_com: bool | None = None) -> dict:
+                location: _schemas.OptionalLocation = None,
+                sheet: str | None = None, header: bool = True,
+                delimiter: str | None = None, encoding: str = "utf-8",
+                formulas: bool = False, allow_loss: bool = False,
+                backup: bool = True, verify_com: bool | None = None) -> dict:
     """Import CSV, TSV, or JSON into a sheet at an anchor. Pass source (inline
     text) or source_file (a path); fmt auto-detects from the extension.
     location is the top-left anchor (default A1). A cell whose text begins
@@ -834,18 +880,19 @@ def import_data(path: str, source: str | None = None,
 
 
 @_tool("lite")
-def export_range(path: str, location: Any = None, sheet: str | None = None,
-                 fmt: str = "csv", header: bool = True, values: str = "cached",
+def export_range(path: str, location: _schemas.OptionalLocation = None,
+                 sheet: str | None = None, fmt: str = "csv",
+                 header: bool = True, values: str = "cached",
                  records: bool = False, out_file: str | None = None,
                  overwrite: bool = False) -> dict:
     """Export a range, table, or sheet to CSV, TSV, or JSON. location defaults
-    to the sheet's true used range; {table} exports a table. values is
-    cached | formula | both; the result states the mode used. out_file
-    writes to a file; otherwise text returns inline. The target is
-    guarded: never the source workbook, a workbook extension, or
-    .ks4xl-backups; an existing file refuses unless overwrite is true,
-    which first keeps a timestamped .bak. Multi-sheet export is
-    export_file (io pack). Read-only; the workbook never changes."""
+    to the true used range; {table} exports a table. values is cached |
+    formula | both; the result states the mode used. out_file writes a file;
+    otherwise text returns inline. The target is guarded: never the source
+    workbook, a workbook extension, a reserved device name, or
+    .ks4xl-backups; an existing file needs overwrite, which keeps a .bak
+    first. Filter-hidden rows export like any other row. Multi-sheet is
+    export_file, io pack. Read-only."""
     return _dataio.export_range(
         path, location=location, sheet=sheet, fmt=fmt, header=header,
         values=values, records=records, out_file=out_file,
@@ -863,9 +910,9 @@ def export_range(path: str, location: Any = None, sheet: str | None = None,
 
 
 @_tool("lite")
-def modify_grid_structure(path: str, action: str, at: Any, count: int = 1,
-                          sheet: str | None = None, allow_loss: bool = False,
-                          backup: bool = True,
+def modify_grid_structure(path: str, action: str, at: _schemas.GridPosition,
+                          count: int = 1, sheet: str | None = None,
+                          allow_loss: bool = False, backup: bool = True,
                           verify_com: bool | None = None) -> dict:
     """Insert or delete rows or columns at a position and REWRITE EVERY
     REFERENCE so the workbook stays coherent: formulas on every sheet
@@ -894,7 +941,8 @@ def modify_grid_structure(path: str, action: str, at: Any, count: int = 1,
 
 
 @_tool("lite")
-def set_merge(path: str, action: str, location: Any = None,
+def set_merge(path: str, action: str,
+              location: _schemas.OptionalLocation = None,
               sheet: str | None = None, confirm_data_loss: bool = False,
               allow_loss: bool = False, backup: bool = True,
               verify_com: bool | None = None) -> dict:
@@ -921,8 +969,9 @@ def set_merge(path: str, action: str, location: Any = None,
 @_tool("lite")
 def find_cells(path: str, query: str, look_in: str = "values",
                match: str = "contains", match_case: bool = False,
-               sheet: str | None = None, location: Any = None,
-               limit: int = 100, offset: int = 0) -> dict:
+               sheet: str | None = None,
+               location: _schemas.OptionalLocation = None, limit: int = 100,
+               offset: int = 0) -> dict:
     """Search cell values and/or formulas across a workbook, sheet, or range
     and return EVERY match with its unambiguous address (the plural form
     of the single-target search location selector). match is exact,
@@ -937,12 +986,12 @@ def find_cells(path: str, query: str, look_in: str = "values",
 
 
 @_tool("lite")
-def replace_cells(path: str, find: str, replace: str,
-                  look_in: str = "values", match: str = "contains",
-                  match_case: bool = False, sheet: str | None = None,
-                  location: Any = None, dry_run: bool = False,
-                  formulas: bool = False, allow_loss: bool = False,
-                  backup: bool = True,
+def replace_cells(path: str, find: str, replace: str, look_in: str = "values",
+                  match: str = "contains", match_case: bool = False,
+                  sheet: str | None = None,
+                  location: _schemas.OptionalLocation = None,
+                  dry_run: bool = False, formulas: bool = False,
+                  allow_loss: bool = False, backup: bool = True,
                   verify_com: bool | None = None) -> dict:
     """Find-and-replace across a workbook, sheet, or range. match is exact
     (whole cell), contains (literal substring), or regex (timeout-guarded;
@@ -967,7 +1016,7 @@ def replace_cells(path: str, find: str, replace: str,
 
 
 @_tool("lite")
-def get_cells(path: str, cells: list, values: str = "cached",
+def get_cells(path: str, cells: _schemas.CellAddresses, values: str = "cached",
               sheet: str | None = None) -> dict:
     """Read many individually addressed cells in one call, the scatter
     complement to the rectangular read_range. cells is a list of A1 strings
@@ -980,7 +1029,7 @@ def get_cells(path: str, cells: list, values: str = "cached",
 
 
 @_tool("lite")
-def set_cells(path: str, cells: list, sheet: str | None = None,
+def set_cells(path: str, cells: _schemas.CellWrites, sheet: str | None = None,
               allow_loss: bool = False, backup: bool = True,
               verify_com: bool | None = None) -> dict:
     """Write many individually addressed cells as ONE atomic batch, the
@@ -999,7 +1048,8 @@ def set_cells(path: str, cells: list, sheet: str | None = None,
 
 
 @_tool("design")
-def apply_style(path: str, style: str, location: Any = None,
+def apply_style(path: str, style: str,
+                location: _schemas.OptionalLocation = None,
                 define: dict | None = None, sheet: str | None = None,
                 allow_loss: bool = False, backup: bool = True,
                 verify_com: bool | None = None) -> dict:
@@ -1017,7 +1067,8 @@ def apply_style(path: str, style: str, location: Any = None,
 
 
 @_tool("design")
-def copy_format(path: str, source: Any, dest: Any, sheet: str | None = None,
+def copy_format(path: str, source: _schemas.SourceLocation,
+                dest: _schemas.DestLocation, sheet: str | None = None,
                 allow_loss: bool = False, backup: bool = True,
                 verify_com: bool | None = None) -> dict:
     """The format painter: copy ONE source cell's complete format (font,
@@ -1059,11 +1110,11 @@ def audit_styles(path: str, top: int = 10) -> dict:
 
 @_tool("design")
 def manage_image(path: str, action: str, image_file: str | None = None,
-                 location: Any = None, sheet: str | None = None,
-                 width: int | None = None, height: int | None = None,
-                 index: int | None = None, out_dir: str | None = None,
-                 allow_loss: bool = False, backup: bool = True,
-                 verify_com: bool | None = None) -> dict:
+                 location: _schemas.OptionalLocation = None,
+                 sheet: str | None = None, width: int | None = None,
+                 height: int | None = None, index: int | None = None,
+                 out_dir: str | None = None, allow_loss: bool = False,
+                 backup: bool = True, verify_com: bool | None = None) -> dict:
     """Manage cell-anchored images. action is insert (image_file, location as
     the anchor cell, optional width and height in pixels), list (read-only:
     every image with its sheet, index, anchor, size, and format), delete
@@ -1087,13 +1138,13 @@ def manage_image(path: str, action: str, image_file: str | None = None,
 
 @_tool("design")
 def manage_chart(path: str, action: str, chart_type: str | None = None,
-                 data: Any = None, categories: Any = None,
+                 data: _schemas.ChartRange = None,
+                 categories: _schemas.ChartRange = None,
                  title: str | None = None, x_title: str | None = None,
                  y_title: str | None = None, anchor: str | None = None,
                  sheet: str | None = None, index: int | None = None,
                  titles_from_data: bool = True, allow_loss: bool = False,
-                 backup: bool = True,
-                 verify_com: bool | None = None) -> dict:
+                 backup: bool = True, verify_com: bool | None = None) -> dict:
     """Create, list, and delete charts. action create takes chart_type (bar,
     bar_horizontal, line, pie, doughnut, area, scatter), data (a location
     object; its first row supplies series titles unless titles_from_data is
@@ -1124,7 +1175,7 @@ def manage_chart(path: str, action: str, chart_type: str | None = None,
 @_tool("io")
 def set_protection(path: str, action: str, sheet: str | None = None,
                    password: str | None = None, options: dict | None = None,
-                   unlock_ranges: list | None = None, locked: bool = False,
+                   unlock_ranges: _schemas.RangeList = None, locked: bool = False,
                    structure: bool = True, windows: bool = False,
                    scope: str = "all", allow_loss: bool = False,
                    backup: bool = True,
@@ -1156,16 +1207,16 @@ def set_protection(path: str, action: str, sheet: str | None = None,
 @_tool("io")
 def set_page_layout(path: str, sheet: str | None = None,
                     orientation: str | None = None,
-                    paper_size: Any = None, margins: dict | None = None,
-                    scale: int | None = None, fit_to_width: int | None = None,
+                    paper_size: _schemas.PaperSize = None,
+                    margins: dict | None = None, scale: int | None = None,
+                    fit_to_width: int | None = None,
                     fit_to_height: int | None = None,
                     print_area: str | None = None,
                     print_title_rows: str | None = None,
                     print_title_cols: str | None = None,
                     gridlines: bool | None = None,
                     headings: bool | None = None, allow_loss: bool = False,
-                    backup: bool = True,
-                    verify_com: bool | None = None) -> dict:
+                    backup: bool = True, verify_com: bool | None = None) -> dict:
     """Set the print-shaped page settings in one call; every parameter is
     optional and unset ones keep their current values. orientation is
     portrait or landscape; paper_size is a name (letter, legal, tabloid,
@@ -1264,7 +1315,7 @@ def get_connections(path: str) -> dict:
 
 
 @_tool("io")
-def export_file(path: str, fmt: str = "csv", sheets: list | None = None,
+def export_file(path: str, fmt: str = "csv", sheets: _schemas.SheetNames = None,
                 out_dir: str | None = None, out_file: str | None = None,
                 header: bool = True, values: str = "cached",
                 records: bool = False, overwrite: bool = False) -> dict:
@@ -1293,7 +1344,7 @@ def export_file(path: str, fmt: str = "csv", sheets: list | None = None,
 
 
 @_tool("lite")
-def set_formula(path: str, location: Any, formula: str,
+def set_formula(path: str, location: _schemas.Location, formula: str,
                 sheet: str | None = None, allow_loss: bool = False,
                 backup: bool = True,
                 verify_com: bool | None = None) -> dict:
@@ -1311,7 +1362,7 @@ def set_formula(path: str, location: Any, formula: str,
 
 
 @_tool("lite")
-def audit_formulas(path: str, location: Any = None,
+def audit_formulas(path: str, location: _schemas.OptionalLocation = None,
                    sheet: str | None = None) -> dict:
     """Read-only formula intelligence for a range, one sheet (sheet alone), or
     the whole workbook (no scope): the formula list plus five safety
@@ -1612,14 +1663,13 @@ def com_set_sparkline(path: str, action: str = "create",
                       type: str = "line", sheet: str | None = None,
                       timeout_seconds: float | None = None,
                       backup: bool = True) -> dict:
-    """Create, clear, or list sparkline groups through Excel (sparklines
-    live in worksheet XML the file tier cannot round-trip, so Excel owns
-    them here). action='create': location is the cell/range that displays
-    them (e.g. 'G2:G10'), source the data range (e.g. 'A2:F10'), type
-    'line', 'column', or 'win_loss'. action='clear' removes groups in
-    location; action='list' is a read-only inventory. Auto-backup on
-    mutations; private hidden Excel instance, serialized, timeout-bounded;
-    refuses while the file is open in Excel."""
+    """Create, clear, or list sparkline groups through Excel (they live in
+    worksheet XML the file tier cannot round-trip, so Excel owns them).
+    action='create': location is the cell/range that shows them (e.g.
+    'G2:G10'), source the data range (e.g. 'A2:F10'), type 'line',
+    'column', or 'win_loss'. 'clear' removes groups in location; 'list'
+    inventories sheet, or the workbook when no sheet is named. Auto-backup
+    on mutations; private hidden Excel, serialized, timeout-bounded."""
     return _comtier.com_set_sparkline(
         path, action=action, location=location, source=source, type=type,
         sheet=sheet, timeout_seconds=timeout_seconds, backup=backup)

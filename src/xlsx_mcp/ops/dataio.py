@@ -19,6 +19,7 @@ verify; export_range is read-only.
 
 from __future__ import annotations
 
+import codecs as _codecs
 import csv as _csv
 import io as _io
 import json as _json
@@ -29,6 +30,7 @@ from typing import Any
 from openpyxl.utils import get_column_letter
 
 from ..core import limits as _limits
+from ..core import safesave as _safesave
 from ..core.errors import RangeOutOfBounds, XlMcpError
 from ..core.outguard import guard_out_dir, guard_out_file
 from ..core.package import WorkbookPackage
@@ -102,6 +104,18 @@ def import_data(path: str, source: str | None = None,
         raise XlMcpError(f"fmt must be one of {_FORMATS}")
     if not source and not source_file:
         raise XlMcpError("pass source (inline text) or source_file (a path)")
+    # Check the codec name before either branch. The file branch used to
+    # discover a bad name inside open(), which surfaced as a generic lookup
+    # failure, and the inline branch never looked at all, so "utf-99" was
+    # accepted in silence and the caller learned nothing about the encoding
+    # it thought it had asked for.
+    try:
+        _codecs.lookup(encoding)
+    except LookupError:
+        raise XlMcpError(
+            f"unknown encoding {encoding!r}; encoding must name a codec "
+            "Python knows, for example utf-8, utf-8-sig, cp1252, or "
+            "latin-1") from None
     if source_file:
         sp = check_path(source_file, "read import file")
         with open(sp, encoding=encoding) as fh:
@@ -356,8 +370,14 @@ def export_file(path: str, fmt: str = "csv", sheets: list | None = None,
                 dests = []
                 for name, text in per_sheet.items():
                     safe = _UNSAFE_NAME.sub("_", name)
-                    dests.append(
-                        (os.path.join(od, f"{stem}_{safe}.{fmt}"), text))
+                    # workbook stem + sheet name + extension is built, not
+                    # given, so it can exceed a filesystem's per-component
+                    # limit (255 BYTES on ext4, 255 characters on Windows)
+                    # even though both halves were legal on their own.
+                    dests.append((
+                        os.path.join(
+                            od, _safesave.bound_name(f"{stem}_{safe}.{fmt}")),
+                        text))
                 lows = [os.path.normcase(d) for d, _t in dests]
                 if len(set(lows)) < len(lows):
                     raise XlMcpError(

@@ -32,13 +32,40 @@ import shutil
 from pathlib import Path
 
 from .errors import XlMcpError
-from .safesave import BACKUP_DIR_NAME, canonical_key
+from .safesave import (
+    BACKUP_DIR_NAME,
+    MAX_NAME_CHARS,
+    bound_name,
+    canonical_key,
+    name_fits,
+)
 from .sandbox import check_path
 
 #: Extensions that mean "this path is (or is meant to be) a workbook".
 WORKBOOK_EXTS = frozenset({
     ".xlsx", ".xlsm", ".xlsb", ".xltx", ".xltm", ".xlam", ".xls", ".xlt",
 })
+
+#: Reserved Windows device names. A path whose stem is one of these does not
+#: address a file at all: the write goes to the device and succeeds, the
+#: bytes go nowhere, and nothing on disk changes. Excel-shaped column names
+#: make this reachable by accident (out_file="AUX.csv" from a column called
+#: AUX, or "CON" from a header row). Checked on every platform, not only
+#: Windows, so a path built on Linux and consumed on Windows refuses in the
+#: same place either way.
+WINDOWS_DEVICE_NAMES = frozenset({
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+})
+
+
+def _device_name(p: Path) -> str | None:
+    """The reserved device name a target resolves to, or None. Windows
+    matches on the stem, case-insensitively, with trailing dots and spaces
+    stripped, so 'con.csv', 'CON', and 'con. ' are all the console."""
+    stem = p.name.split(".")[0].strip().rstrip(". ").upper()
+    return stem if stem in WINDOWS_DEVICE_NAMES else None
 
 
 def _in_backup_store(p: Path) -> bool:
@@ -47,12 +74,24 @@ def _in_backup_store(p: Path) -> bool:
 
 def _timestamped_backup(target: str) -> str:
     """Copy the file about to be replaced to <name>.<DTG>.bak beside it,
-    uniquified so a rapid double-overwrite never eats its own backup."""
+    uniquified so a rapid double-overwrite never eats its own backup.
+
+    The .bak name is BUILT from the target's, adding 20 characters, so a
+    target that was legal can produce a name that is not: ext4 caps a
+    filename component at 255 BYTES, Windows at 255 characters, and a
+    non-ASCII name hits the byte ceiling first. bound_name holds the built
+    name inside both, hash-truncating the stem rather than failing the
+    overwrite the caller already authorized."""
     stamp = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-    base = f"{target}.{stamp}.bak"
-    dest, n = base, 2
+    directory, name = os.path.split(target)
+
+    def built(tag: str) -> str:
+        return os.path.join(
+            directory, bound_name(f"{name}.{stamp}{tag}.bak", headroom=4))
+
+    dest, n = built(""), 2
     while os.path.exists(dest):
-        dest = f"{target}.{stamp} ({n}).bak"
+        dest = built(f" ({n})")
         n += 1
     shutil.copy2(target, dest)
     return dest
@@ -96,6 +135,26 @@ def guard_out_file(target: str, *, source: str | None = None,
             "store: overwriting a backup slot destroys the undo it holds. "
             "Choose an output path outside the backup store.")
 
+    device = _device_name(tp)
+    if device is not None:
+        raise XlMcpError(
+            f"out target {op} names the reserved Windows device {device}, "
+            f"not a file. A write to it reports success and stores nothing, "
+            f"so the {what} would be silently lost. Pass a real file path.")
+
+    # A name the CALLER chose is not bounded (bound_name is for names this
+    # server builds), but it is checked. Windows counts characters and ext4
+    # counts bytes, so a name of 100 Korean characters is comfortable here
+    # and unwritable on the Linux box the same tree is mounted on, and
+    # unwritable inside a zip. Refusing beats writing a file whose name
+    # travels badly, and beats silently renaming what the caller asked for.
+    if len(tp.name) <= MAX_NAME_CHARS and not name_fits(tp.name):
+        raise XlMcpError(
+            f"out target {tp.name}: this name is legal on Windows but "
+            "exceeds 255 bytes in UTF-8, which breaks on other systems and "
+            "inside zip archives. Shorten it to stay portable; non-ASCII "
+            "characters count as multiple bytes.")
+
     if not workbook_target and tp.suffix.lower() in WORKBOOK_EXTS:
         raise XlMcpError(
             f"out target {op} has a workbook extension ({tp.suffix}); this "
@@ -120,4 +179,5 @@ def guard_out_file(target: str, *, source: str | None = None,
     return op, info
 
 
-__all__ = ["guard_out_file", "guard_out_dir", "WORKBOOK_EXTS"]
+__all__ = ["guard_out_file", "guard_out_dir", "WORKBOOK_EXTS",
+           "WINDOWS_DEVICE_NAMES"]

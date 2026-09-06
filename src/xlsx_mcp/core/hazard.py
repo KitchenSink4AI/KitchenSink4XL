@@ -25,6 +25,22 @@ Two deliberate NON-flags, verified empirically:
   mutations on nearly every workbook that ever printed, for a loss that is
   cosmetic (page-setup device settings; the pageSetup element itself
   survives). It stays unflagged by policy and is treated as a routine drop.
+  RE-VERIFIED against the 1.1 fidelity benchmark's printsetup probe, which
+  listed print setup as a silent degradation: orientation, print area, print
+  titles, fit-to-height and all six header and footer slots came back
+  identical, and the only casualties were printerSettings1.bin and its
+  relationship. The benchmark's separate claim that header/footer slots are
+  reshuffled did not reproduce. The policy stands, on a measurement rather
+  than on the original reasoning alone.
+
+- LEGACY COMMENTS ARE NOT A LOSS, and the same benchmark row says they are.
+  Excel names the parts xl/comments1.xml and xl/drawings/vmlDrawing1.vml;
+  openpyxl models the notes and rewrites them as xl/comments/comment1.xml
+  and xl/drawings/commentsDrawing1.vml. A part-name diff sees two parts
+  leave and calls it a drop. Reading the file instead: both notes, both
+  authors, both note-box dimensions came back identical. That is
+  why _refine_comment_vml demotes content-verified comment-only anchors
+  rather than refusing on them.
 
 IN-PART HAZARDS (the former known limit, now closed). Some fragile content
 does not live in a part of its own: x14 conditional formatting (every modern
@@ -52,14 +68,21 @@ still caught.
 The package policy governs the outcome: drop-risk refuses
 without allow_loss, degrade-risk warns and proceeds. In-part extensions are
 drop-risk, so a mutation that would lose them now raises HAZARD_REFUSED naming
-the rules at risk and the two ways out (the COM route, or allow_loss with a
-backup). Under allow_loss the loss is still announced item by item. This
-replaces the previous warn-and-proceed behavior, which announced the loss but
-let it happen.
+the rules at risk and the ways out. Under allow_loss the loss is still
+announced item by item. This replaces the previous warn-and-proceed behavior,
+which announced the loss but let it happen.
+
+The refusal used to name a COM route (see refusal_routes below). It does not
+any more: the com pack holds no tool that writes a cell, a format, or a row,
+so for a refused file-tier mutation that route was a dead end the caller had
+to walk before finding out. Preservation is the real fix and it is not in
+this release; until it lands the refusal states the exact losses and the two
+options that exist.
 """
 
 from __future__ import annotations
 
+import os
 import re
 import zipfile
 from dataclasses import dataclass, field
@@ -387,6 +410,29 @@ def _refine_comment_vml(
 #: member name (see _never and _detect_in_part_extensions).
 IN_PART_EXT_KEY = "in_part_extensions"
 
+#: Three more classes that live inside a part which survives, found by the
+#: 1.1 fidelity benchmark. Same shape as IN_PART_EXT_KEY: no member name to
+#: match on, so _never is the matcher and a content reader finds them.
+PROTECTED_RANGES_KEY = "protected_ranges"
+SORT_STATE_KEY = "sort_state"
+DOC_PROPERTIES_KEY = "doc_properties"
+
+#: The worksheet elements openpyxl neither reads nor writes, as (local name,
+#: hazard key). Both are plain CT_Worksheet children, NOT extLst content, so
+#: the extLst walk above does not see them. The x14 protected-range extension
+#: is a different element that the extLst walk does cover.
+_IN_PART_WORKSHEET_ELEMENTS: tuple[tuple[bytes, str], ...] = (
+    (b"protectedRange", PROTECTED_RANGES_KEY),
+    (b"sortState", SORT_STATE_KEY),
+)
+
+#: docProps/app.xml fields a human authored, which openpyxl's writer does not
+#: carry across (it emits a fresh ExtendedProperties every save). An EMPTY
+#: element is not a loss and does not flag: Excel writes <Company/> on most
+#: installs, and flagging that would put a hazard on nearly every workbook.
+_APP_PROPERTY_TAGS: tuple[str, ...] = ("Company", "Manager")
+_APP_PART = "docprops/app.xml"
+
 #: Worksheet extLst URIs and what each one carries, mirroring
 #: openpyxl.xml.constants.EXT_TYPES so these labels line up with the
 #: "... extension is not supported and will be removed" warnings the package
@@ -494,6 +540,75 @@ def _detect_in_part_extensions(
     )
 
 
+def _detect_in_part_worksheet_elements(
+    found: dict[str, "Hazard"], names: Iterable[str],
+    part_reader: Callable[[str], bytes] | None,
+) -> None:
+    """Add a hazard for each worksheet element openpyxl silently discards.
+
+    The extLst walk above answers a different question: it asks what is in
+    the extension block. <protectedRanges> and <sortState> are ordinary
+    CT_Worksheet children written by Excel in the plain namespace, so they
+    are invisible to that walk, and openpyxl's reader has no handler for
+    either. The 1.1 fidelity benchmark measured both going out with the
+    save on a file that reported clean.
+
+    A byte scan is enough. Both names are distinctive, neither appears in
+    an attribute value or a shared string that reaches this part, and a
+    false positive costs a needless refusal rather than lost content, which
+    is the direction this table errs in by policy.
+    """
+    if part_reader is None:
+        return
+    hits: dict[str, list[str]] = {}
+    for name in names:
+        if not _is_worksheet_part(name):
+            continue
+        try:
+            data = part_reader(name)
+        except Exception:  # noqa: BLE001
+            continue
+        for needle, key in _IN_PART_WORKSHEET_ELEMENTS:
+            if b"<" + needle in data or b":" + needle in data:
+                hits.setdefault(key, []).append(name)
+    for key, parts in hits.items():
+        spec = _SPEC_BY_KEY[key]
+        found[key] = Hazard(spec.key, spec.label, spec.severity,
+                            spec.survives_openpyxl, spec.note, parts)
+
+
+def _detect_doc_properties(
+    found: dict[str, "Hazard"], names: Iterable[str],
+    part_reader: Callable[[str], bytes] | None,
+) -> None:
+    """Add the document-properties hazard when app.xml carries authored text.
+
+    Only non-empty fields count. openpyxl rewrites app.xml unconditionally,
+    but rewriting <Company/> into nothing loses nothing, and this file's
+    whole discipline is that a hazard means content actually goes missing.
+    """
+    if part_reader is None:
+        return
+    part = next((n for n in names if _normalized(n).lower() == _APP_PART),
+                None)
+    if part is None:
+        return
+    try:
+        data = part_reader(part)
+    except Exception:  # noqa: BLE001
+        return
+    text = data.decode("utf-8", "replace")
+    carried = [tag for tag in _APP_PROPERTY_TAGS
+               if re.search(rf"<{tag}>\s*\S[^<]*</{tag}>", text)]
+    if not carried:
+        return
+    spec = _SPEC_BY_KEY[DOC_PROPERTIES_KEY]
+    found[DOC_PROPERTIES_KEY] = Hazard(
+        spec.key, f"{spec.label}: {', '.join(carried)}", spec.severity,
+        spec.survives_openpyxl, spec.note, [part],
+    )
+
+
 # The knowledge table. survives_openpyxl is the CLAIM the fidelity harness
 # checks. Ordered most-to-least destructive for readable reports.
 HAZARD_SPECS: tuple[HazardSpec, ...] = (
@@ -592,6 +707,34 @@ HAZARD_SPECS: tuple[HazardSpec, ...] = (
         "warns that each is unsupported, and writes none of them back, so the "
         "rules are gone from a file that looks untouched. Detected by reading "
         "the worksheet, not by a part name.",
+        _never,
+    ),
+    HazardSpec(
+        PROTECTED_RANGES_KEY, "allow-edit ranges", SEV_DROPS, False,
+        "a protected sheet's <protectedRanges> block names the ranges that "
+        "stay editable, each with its own name and optional password. "
+        "openpyxl has no model for it and writes none of it back, so the "
+        "sheet returns protected with its exceptions gone and cells that "
+        "were editable no longer are. The sheetProtection element itself "
+        "survives, which is what makes the loss quiet.",
+        _never,
+    ),
+    HazardSpec(
+        SORT_STATE_KEY, "autofilter sort state", SEV_DROPS, False,
+        "a worksheet's <sortState> records the sort the user applied under "
+        "an autofilter: which column, which direction, over which range. "
+        "Excel writes it beside the autoFilter element, openpyxl's reader "
+        "looks for it only INSIDE that element, so it is read by nobody and "
+        "written by nobody. The filter survives and the sort it was sorted "
+        "by does not.",
+        _never,
+    ),
+    HazardSpec(
+        DOC_PROPERTIES_KEY, "document properties", SEV_DEGRADES, False,
+        "docProps/app.xml is rewritten from an empty template on every save, "
+        "so the authored fields it carries are cleared. The core properties "
+        "in docProps/core.xml (title, subject, creator, keywords, category, "
+        "description) survive.",
         _never,
     ),
     HazardSpec(
@@ -888,6 +1031,8 @@ def scan_names(names: Iterable[str], path: str = "<names>", *,
     _refine_drawings(found, nameset, reader)
     demoted_vml = _refine_comment_vml(found, nameset, reader)
     _detect_in_part_extensions(found, names, reader)
+    _detect_in_part_worksheet_elements(found, names, reader)
+    _detect_doc_properties(found, names, reader)
     ordered = [found[s.key] for s in HAZARD_SPECS if s.key in found]
     return HazardReport(path=path, parts=names, hazards=ordered,
                         comment_anchor_vml=demoted_vml)
@@ -951,6 +1096,17 @@ def scan_path(path: str) -> HazardReport:
         return HazardReport(path=path, parts=[], hazards=[],
                             error="file not found", error_kind="missing")
     except PermissionError:
+        # PermissionError means two different things and they need
+        # different words. On Windows it is usually a lock: another
+        # process holds the file and the OS denies the open. On POSIX it
+        # is usually the permission bits, and telling the owner of a file
+        # they cannot read that "another process holds a lock" sends them
+        # hunting for a process that does not exist. Ask the filesystem
+        # which one it is rather than guessing from the exception type.
+        if not os.access(path, os.R_OK):
+            return HazardReport(
+                path=path, parts=[], hazards=[], error=_UNREADABLE_ERROR,
+                error_kind="permissions")
         return HazardReport(
             path=path, parts=[], hazards=[], error=_LOCKED_ERROR,
             error_kind="locked")
@@ -960,6 +1116,12 @@ def scan_path(path: str) -> HazardReport:
             error=f"cannot read the file ({type(exc).__name__}: {exc})",
             error_kind="os")
 
+
+_UNREADABLE_ERROR = (
+    "this process is not allowed to read the file. The file itself is "
+    "intact and nothing is holding it; its permissions deny read access "
+    "to the account this server runs as. Grant read permission, or run "
+    "the server as an account that has it")
 
 _LOCKED_ERROR = (
     "another process holds a lock on part of this file (an antivirus "
@@ -1014,7 +1176,10 @@ def route(
             )
         return ROUTE_REFUSE, (
             "degradable parts present (" + ", ".join(report.labels())
-            + "); enable COM or pass allow_loss to accept degradation"
+            + "); pass allow_loss to accept the degradation, or leave the "
+              "workbook to Excel. The com pack drives Excel for "
+              "recalculation, pivots, export, rendering and conversion, "
+              "and writes no cells, so it cannot carry this edit"
         )
     # would_lose: parts openpyxl drops outright.
     if edit == "surgical" and _raw_safe(report):
@@ -1037,9 +1202,51 @@ def route(
     return ROUTE_REFUSE, (
         "would lose " + ", ".join(
             _SPEC_BY_KEY[k].label for k in report.lossy_keys)
-        + "; enable COM, use a surgical raw-OOXML edit, or pass allow_loss "
-        "with a backup"
+        + "; a surgical raw-OOXML edit preserves them, or pass allow_loss "
+        "with a backup to accept the loss. The com pack writes no cells "
+        "and is not a route for this"
     )
+
+
+# ------------------------------------------------- refusal routes (honest)
+# The gate used to offer "enable COM (com pack)" as the remedy for any
+# refused file-tier mutation. The com pack holds eleven tools -- recalculate,
+# com_manage_pivot, com_goal_seek, com_export_pdf, com_render_sheet,
+# com_convert_format, com_save_with_password, com_set_sparkline, com_autofit,
+# com_validate_opens_clean, com_status -- and NONE of them writes a cell, a
+# format, or a row. A caller who enabled the pack as instructed found nothing
+# there that could perform the operation that was refused. Naming a remedy
+# that does not exist is worse than naming none, in a product whose whole
+# claim is that its labels are honest.
+#
+# So the routes are now the two that are real: accept the loss explicitly,
+# with the exact cost stated per class, or do not put this workbook through
+# the file tier. Preservation is the fix and it is not in this release.
+
+#: The route strings, kept as data so the refusal text, the .detail payload,
+#: and the tests all read the same list.
+ROUTE_ALLOW_LOSS = "allow_loss=true: proceed while accepting exactly that loss (backed up first; the loss is permanent in the saved file)"
+ROUTE_LEAVE_ALONE = "make this edit in Excel itself, which preserves everything; copy_workbook branches the file byte-for-byte if you want a working copy"
+
+
+def loss_costs(keys) -> list[str]:
+    """"<label>: <what openpyxl does to it>" for each refused hazard class.
+
+    The caller deciding whether to pass allow_loss is deciding to destroy
+    specific content, so the refusal states which content and what happens
+    to it, rather than a class name the caller has to go look up."""
+    out = []
+    for k in keys:
+        spec = _SPEC_BY_KEY.get(k)
+        if spec is None:
+            continue
+        out.append(f"{spec.label}: {spec.note.rstrip('.')}")
+    return out
+
+
+def refusal_routes() -> list[str]:
+    """The routes a refused file-tier mutation actually has."""
+    return [ROUTE_ALLOW_LOSS, ROUTE_LEAVE_ALONE]
 
 
 def _raw_safe(report: HazardReport) -> bool:
@@ -1053,6 +1260,8 @@ def _raw_safe(report: HazardReport) -> bool:
 __all__ = [
     "HazardReport", "Hazard", "HazardSpec", "HAZARD_SPECS",
     "EXT_DROP_LABELS", "IN_PART_EXT_KEY",
+    "PROTECTED_RANGES_KEY", "SORT_STATE_KEY", "DOC_PROPERTIES_KEY",
+    "loss_costs", "refusal_routes", "ROUTE_ALLOW_LOSS", "ROUTE_LEAVE_ALONE",
     "ole_container_kind", "ole_refusal_text", "refuse_ole_container",
     "OLE_KIND_BIFF", "OLE_KIND_ENCRYPTED", "OLE_KIND_UNKNOWN",
     "scan_path", "scan_names", "route",

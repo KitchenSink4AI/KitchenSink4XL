@@ -721,16 +721,59 @@ def com_export_pdf(path: str, output: str, scope: str = "workbook",
     return result
 
 
+def _clipboard_available() -> bool:
+    """True when this Windows session lets any process open the clipboard.
+
+    Excel offers exactly one route from a range to a bitmap,
+    Range.CopyPicture, and CopyPicture goes through the Windows clipboard.
+    A service account, a locked workstation, or a session with no window
+    station refuses the clipboard to every process, so the render cannot
+    succeed regardless of Excel or this server. The probe runs entirely
+    outside Excel, so its answer is about the environment. The COM-tier
+    gate has probed this since b7150e3; the product did not, and handed
+    back Excel's raw "CopyPicture method of Range class failed" instead.
+    """
+    try:
+        import win32clipboard
+    except Exception:  # noqa: BLE001
+        return False
+    try:
+        win32clipboard.OpenClipboard()
+    except Exception:  # noqa: BLE001
+        return False
+    try:
+        win32clipboard.CloseClipboard()
+    except Exception:  # noqa: BLE001
+        pass
+    return True
+
+
 def com_render_sheet(path: str, output: str, sheet: str | None = None,
                      range_a1: str | None = None, overwrite: bool = False,
                      timeout_seconds: float | None = None) -> dict:
     """Render a sheet's used range (or a given range) to a PNG image for
     visual verification, via CopyPicture into a temporary chart canvas."""
     p = _norm_path(path, "com_render_sheet")
+    # The CALLER's own arguments are judged before the environment is. A
+    # .bmp target is wrong on every machine, and answering it with a
+    # clipboard refusal on the machines that have no clipboard makes the
+    # same call report two different problems depending on where it ran.
+    # The suffix check is pure: _out_path can write a .bak, so it stays
+    # after the probe and no file is touched for a call that refuses.
+    if not str(output).lower().endswith(".png"):
+        raise XlMcpError("output must be a .png path")
+    if not _clipboard_available():
+        # Named cause, and no workaround offered for the render itself,
+        # because there is none: CopyPicture is Excel's only range-to-bitmap
+        # route.
+        raise XlMcpError(
+            "rendering this range needs the Windows clipboard, and this "
+            "session does not have one (service accounts and locked or "
+            "disconnected sessions often do not). Run it from an ordinary "
+            "logged-in desktop session, or export the range as values "
+            "instead")
     out, out_info = _out_path(output, "com_render_sheet output",
                               overwrite=overwrite, source=p)
-    if not out.lower().endswith(".png"):
-        raise XlMcpError("output must be a .png path")
 
     def body(app, wb) -> dict:
         try:
@@ -1051,8 +1094,16 @@ def com_set_sparkline(path: str, action: str = "create",
     if action == "list":
         def body(app, wb) -> dict:
             groups: list[dict] = []
-            for i in range(1, int(wb.Worksheets.Count) + 1):
-                ws = wb.Worksheets(i)
+            # sheet scopes the inventory. Create and clear have always
+            # honored it; list ignored it and returned the whole workbook,
+            # so a caller that named a sheet got an answer about sheets it
+            # had not asked about and no signal that it had been ignored.
+            if sheet is not None:
+                sheets = [_ws(wb, sheet)]
+            else:
+                sheets = [wb.Worksheets(i)
+                          for i in range(1, int(wb.Worksheets.Count) + 1)]
+            for ws in sheets:
                 try:
                     # ws.Cells, not UsedRange: sparkline cells hold no
                     # values, so they can sit OUTSIDE the used range.
