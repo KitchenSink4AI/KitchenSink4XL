@@ -150,13 +150,21 @@ source. Its docstring carries the counting definition and the exclusions.
 
 - Claude Desktop: download the `.mcpb` bundle from the latest GitHub release and open it. Requires `uv` on PATH.
 - Claude Code: `claude mcp add xl -s user -- uvx kitchensink4xl`
-- pip: `pip install kitchensink4xl` (COM pack: `pip install kitchensink4xl[com]`, a no-op off Windows)
+- pip: `pip install kitchensink4xl` (COM pack: `pip install kitchensink4xl[com]`, a no-op off Windows). On Windows the COM dependency often arrives transitively with the base install; installing with `[com]` is the guaranteed route either way, and harmless to repeat.
 - uvx, no install: `uvx kitchensink4xl`
 - Any MCP client: run the `kitchensink4xl` (or `xl-mcp`) executable over stdio, for example `{"mcpServers": {"xl": {"command": "kitchensink4xl"}}}`
+- Interpreter plus module, same server: `python -m xlsx_mcp.server`. The distribution is `kitchensink4xl` and the installed package is `xlsx_mcp`; `import kitchensink4xl` fails.
+
+First launch through uvx downloads and builds the environment and can take 20
+to 30 seconds before the server answers; every launch after that starts in
+about two. If a client reports a timeout on first install, launch once from a
+terminal and try again.
 
 Environment: `KS4XL_MODE`, `KS4XL_PACK_POLICY`, `KS4XL_ALLOWED_ROOTS` (an
 `os.pathsep`-separated path sandbox, gating reads as well as writes),
-`KS4XL_VERIFY_COM`, `KS4XL_VALIDATE_COM`, `KS4XL_COM_TIMEOUT`.
+`KS4XL_VERIFY_COM`, `KS4XL_VALIDATE_COM`, `KS4XL_COM_TIMEOUT`,
+`KS4XL_NO_UPDATE_CHECK` (`1` or `true` turns the update check off completely:
+no network call, no cache file).
 
 ## 9. Known limits
 
