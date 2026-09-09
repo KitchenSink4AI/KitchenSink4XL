@@ -111,6 +111,28 @@ mcp = FastMCP(
 # ------------------------------------------------------- boundary envelope
 
 
+#: Every result crosses the wire ONCE, compact.
+#:
+#: It used to cross twice: pretty-printed in `content` and again, whole, in
+#: `structuredContent`. The indent alone added +48-80% to array-heavy payloads
+#: and the duplication doubled what was left, so a 200-row read cost 22,666
+#: tokens to deliver 6,479 tokens of payload.
+#:
+#: The duplication was not gratuitous: declaring an outputSchema is what
+#: obliges a client to expect structuredContent, and this server declared one
+#: on all 69 tools. Every one of them was the contentless
+#: {"type": "object", "additionalProperties": true} -- 828 tokens of surface
+#: spent buying no validation whatsoever, while committing every response to
+#: being sent twice. So the schema goes (see _tool) and the second copy goes
+#: with it. Nothing about what a caller LEARNS from a result changes: the same
+#: JSON object, same keys, same values, in content[0].text.
+#:
+#: Refusals keep structured_content. They carry isError, which forces the
+#: CallToolResult path anyway, they are small, and RefusalResult's mapping
+#: protocol reads the payload back out of it in-process.
+_COMPACT = (",", ":")
+
+
 class _SuccessEnvelope(_FmcpMiddleware):
     """Success fields at the MCP boundary: object results gain
     ok (and file, when the call named one). In-process calls bypass this
@@ -124,21 +146,22 @@ class _SuccessEnvelope(_FmcpMiddleware):
     async def on_call_tool(self, context, call_next):
         result = await call_next(context)
         sc = getattr(result, "structured_content", None)
-        if isinstance(sc, dict) and "ok" not in sc:
+        if getattr(result, "is_error", False) or not isinstance(sc, dict):
+            return result
+        out: dict[str, Any] = sc
+        if "ok" not in sc:
             args = getattr(context.message, "arguments", None) or {}
-            out: dict[str, Any] = {"ok": True}
+            out = {"ok": True}
             for key in self._FILE_KEYS:
                 value = args.get(key)
                 if isinstance(value, str):
                     out["file"] = value
                     break
             out.update(sc)
-            return _FmcpToolResult(
-                content=_json.dumps(out, indent=2, ensure_ascii=False,
-                                    default=str),
-                structured_content=out,
-            )
-        return result
+        return _FmcpToolResult(
+            content=_json.dumps(out, ensure_ascii=False, default=str,
+                                separators=_COMPACT),
+        )
 
 
 mcp.add_middleware(_SuccessEnvelope())
@@ -177,6 +200,16 @@ def _tool(pack: str):
             annotations={
                 "readOnlyHint": _readonly.read_only_hint(fn.__name__)
             },
+            # No outputSchema. Every tool here returns `dict`, from which
+            # fastmcp derives {"type": "object", "additionalProperties": true}
+            # -- a schema that validates nothing, costs 828 tokens of surface
+            # across 69 tools, and obliges the client to expect a second,
+            # duplicate copy of every result in structuredContent. A schema
+            # that bought real validation would be worth both; this one bought
+            # neither. Declaring none is the honest shape. If a tool ever gains a real output
+            # schema, it gets one HERE, per tool, and pays for its own
+            # structuredContent.
+            output_schema=None,
         )
         mcp.add_tool(tool)
         _packs.register(fn.__name__, None if pack == "lite" else pack, tool)
@@ -186,6 +219,21 @@ def _tool(pack: str):
 
 
 # ------------------------------------------------------- placeholder reader
+
+
+def _update_check_status() -> dict:
+    """The update report, without its cache path.
+
+    THIS is the server's one and only on-demand check: it may ask PyPI, at
+    most once every seven days, with a two-second cap. No other tool path can
+    reach the network, nothing runs at startup, and a check that fails or is
+    switched off reports that fact rather than going quiet. state is one of:
+    disabled, update_available, current, unknown. Never raises.
+    """
+    try:
+        return _upd.status()
+    except Exception:
+        return {"state": "unknown", "note": _upd.NOTE_UNKNOWN}
 
 
 @_tool("lite")
@@ -212,8 +260,12 @@ def get_server_info() -> dict:
             "verify_com_default": _package.com_verify_default(),
         },
     }
-    # The server's one and only update surface: a cached line, added when a
-    # newer stable release exists. Reads no network and never raises.
+    # The server's one and only update surface, and its one and only path to
+    # the network: an on-demand check, at most once every seven days, two-second
+    # cap, off under KS4XL_UPDATE_CHECK=off. Nothing runs at startup, no other
+    # tool can fire it, a failed check reports the failure, and this never
+    # raises.
+    out["update_check"] = _update_check_status()
     notice = _upd.update_notice()
     if notice:
         out["update"] = notice
@@ -1836,12 +1888,8 @@ def main() -> None:
     disabled = _startup_disabled_names()
     if disabled:
         mcp.add_transform(_Visibility(False, names=disabled))
-    # Fire and forget: a daemon thread asks PyPI whether a newer release
-    # exists (at most every 14 days, off entirely under
-    # KS4XL_NO_UPDATE_CHECK). Nothing waits on it, nothing it does can
-    # delay or break serving, and the answer only ever appears as one line
-    # in get_server_info.
-    _upd.start_background_check()
+    # No update check here. It runs ON DEMAND, inside get_server_info, and
+    # nowhere else: startup starts no thread and asks PyPI nothing.
     mcp.run()
 
 
