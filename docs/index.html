@@ -617,6 +617,38 @@ footer a{color:var(--brass)}
   *{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important}
   html{scroll-behavior:auto}
 }
+
+/* Responsive polish for translated navigation, card headings, and credits. */
+.masthead{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:baseline}
+.masthead>span{min-width:0;overflow-wrap:anywhere}
+.masthead>span:last-child{justify-self:end;text-align:right;line-height:1.9}
+.dept h3{flex-wrap:wrap;row-gap:4px}
+.dept h3 .num{margin-left:auto;white-space:normal;text-align:right}
+.counter,.step,.demo-panel{min-width:0;overflow-wrap:anywhere}
+footer .row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:28px}
+footer .row>span{min-width:0;overflow-wrap:anywhere}
+@media(max-width:900px){
+  .masthead{grid-template-columns:1fr;justify-items:center;text-align:center}
+  .masthead>span:last-child{justify-self:center;text-align:center}
+  .lang-toggle{justify-content:center}
+  footer .row{grid-template-columns:1fr;gap:20px;text-align:center}
+  footer .row>span:last-child{text-align:center!important}
+}
+@media(max-width:640px){
+  .wrap{padding-left:18px;padding-right:18px}
+  .switchbar{gap:8px 12px;padding:10px 16px;line-height:1.45}
+  .switchbar a,.switchbar .here{white-space:nowrap}
+  .hero{padding-top:48px;padding-bottom:44px}
+  section{padding-top:48px;padding-bottom:48px}
+  .sec-head{align-items:flex-start;gap:9px 12px;flex-wrap:wrap}
+  .sec-head:after{min-width:36px;margin-top:12px}
+  .specs-strip{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+  .spec{min-width:0;padding:14px 10px;border-right:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+  .spec:nth-child(2n){border-right:0}
+  #family .service-grid{margin-right:-18px;padding-right:18px}
+}
+
+.footer-links{text-align:center;padding:10px 20px;font-size:12px}.footer-links a{white-space:nowrap}.release-date{font-size:12px;color:var(--ink-soft);white-space:nowrap;margin-left:auto}
 </style>
 </head>
 <body>
@@ -624,7 +656,7 @@ footer a{color:var(--brass)}
 <div class="wrap masthead rev d1">
   <span data-i18n="m.left"><b>ELECTRICAL DEPARTMENT</b> &middot; FINE INSTRUMENTS FOR THE FULLY WIRED WORKBOOK</span>
   <nav class="lang-toggle" id="langToggle" aria-label="Language"></nav>
-  <span><span data-i18n="m.catalog">CATALOG № 69</span> · <a href="https://kitchensink4.ai/products/" data-i18n="m.family">FAMILY</a> · <a href="#service" data-i18n="m.service">SERVICE</a> · <a href="https://github.com/KitchenSink4AI/KitchenSink4XL">GITHUB</a> · <a href="https://pypi.org/project/kitchensink4xl/">PYPI</a> · <a href="llms.txt">LLMS.TXT</a></span>
+  <span><span data-i18n="m.catalog">CATALOG № 69</span> · <a href="https://kitchensink4.ai/products/" data-i18n="m.family">FAMILY</a> · <a href="#service" data-i18n="m.service">SERVICE</a> · <a href="https://kitchensink4.ai/corporate/" data-i18n="m.company">COMPANY</a> · <a href="https://github.com/KitchenSink4AI/KitchenSink4XL">GITHUB</a> · <a href="https://pypi.org/project/kitchensink4xl/">PYPI</a> · <a href="llms.txt">LLMS.TXT</a></span>
 </div>
 
 <div class="switchbar">
@@ -678,7 +710,7 @@ footer a{color:var(--brass)}
       <summary>
         <span class="tag" data-i18n="new.label">JUST IN</span>
         <span class="ttl" data-i18n="h2.new">New on the shelf</span>
-        <span class="hint" data-i18n="new.t">What version 1.2 just added</span>
+        <time class="release-date" datetime="2026-09-09">2026-09-09</time>
       </summary>
     <div class="newin">
       <p class="sub" data-i18n="new.sub">The short version of the release, no changelog reading required.</p>
@@ -947,7 +979,7 @@ footer a{color:var(--brass)}
         <span class="go" data-i18n="svc3.g">Arrange a license →</span>
       </a>
     </div>
-    <p class="foot-note" style="margin-top:16px" data-i18n="svc.note">Reports are public GitHub issues (a free GitHub account is needed to file one). Every report lands in the maintainer's inbox.</p>
+    <p class="foot-note" style="margin-top:16px" data-i18n="svc.note">Bug reports and feature requests are public GitHub issues and require a free account. Licensing inquiries use the private contact form.</p>
   </div>
 </section>
 
@@ -998,12 +1030,13 @@ footer a{color:var(--brass)}
 <footer>
   <div class="wrap row">
     <span data-i18n="f.left">&copy; 2026 Alvut Consulting, LLC &middot; Licensed <b>AGPL-3.0</b>: free for any use that meets the AGPL's terms, including its source-sharing obligations.<br>Commercial licenses for organizations that need to ship these in closed products (<a href='mailto:licensing@kitchensink4.ai'>licensing@kitchensink4.ai</a>).</span>
-    <span style="text-align:right" data-i18n="f.right"><a href='https://github.com/KitchenSink4AI/KitchenSink4XL'>github.com/KitchenSink4AI/KitchenSink4XL</a> · <a href='https://github.com/KitchenSink4AI/KitchenSink4XL/issues/new/choose'>report a glitch</a><br>Built on the KitchenSink4Word safety core, prototyped with Claude Code, and wired up under inspection until the numbers came back honest. Mind the live parts. 🔌</span>
+    <span style="text-align:right" data-i18n="f.right"><a href="https://github.com/KitchenSink4AI/KitchenSink4XL">Source code</a> · <a href="https://github.com/KitchenSink4AI/KitchenSink4XL/issues/new/choose">Report a glitch</a></span>
   </div>
   <div class="wrap" style="text-align:center;padding:6px 0;font-size:11px"><a href="https://kitchensink4.ai/corporate/" data-i18n="f.corp">The office upstairs: KitchenSink4AI →</a></div>
   <div class="wrap" style="text-align:center;padding:6px 0;opacity:.5;font-size:11px">Not affiliated with, endorsed by, or sponsored by Microsoft Corporation. Microsoft and Excel are trademarks of Microsoft Corporation.</div>
   <div class="wrap" style="text-align:center;padding:10px 0"><img src="https://visitor-badge.laobi.icu/badge?page_id=nometalalchemist.KitchenSink4XL&left_color=%231e3550&right_color=%23735413&left_text=views" alt="views" height="18" style="vertical-align:middle"></div>
 <div class="wrap colophon">SET IN FRAUNCES &amp; IBM PLEX MONO · CATALOG № 69</div>
+<nav class="footer-links" aria-label="Contact and privacy"><a href="https://kitchensink4.ai/contact/" data-i18n="f.contact">Contact</a> · <a href="https://kitchensink4.ai/privacy/" data-i18n="f.privacy">Privacy</a></nav>
 </footer>
 
 <script>
@@ -1129,6 +1162,9 @@ if (lamp && "IntersectionObserver" in window){
 var I18N = {
 en: {
 "pageTitle": "KitchenSink4XL: Everything plus the kitchen sink for Microsoft Excel",
+"f.privacy": "Privacy",
+"f.contact": "Contact",
+"m.company": "COMPANY",
 "m.left": "<b>ELECTRICAL DEPARTMENT</b> &middot; FINE INSTRUMENTS FOR THE FULLY WIRED WORKBOOK",
 "m.catalog": "CATALOG № 69",
 "m.family": "FAMILY",
@@ -1150,7 +1186,6 @@ en: {
 "hero.invite": "↓ or start with the part nobody tells you: why the numbers an AI reads out of a spreadsheet might be wrong",
 "h2.new": "New on the shelf",
 "new.label": "JUST IN",
-"new.t": "What version 1.2 just added",
 "new.sub": "The short version of the release, no changelog reading required.",
 "new1": "<b>Schemas some AI clients need.</b> 39 tool parameters used to emit empty schemas, and some clients silently drop tools over that. All 500 parameters now carry real ones, verified over a live connection.",
 "new2": "<b>Six more conditional formats, plus grouping.</b> Unique, duplicate, above and below average, time period, blanks, and errors join the rule set, and rows and columns can now be grouped, collapsed, and read back.",
@@ -1280,7 +1315,7 @@ en: {
 "svc3.t": "Commercial fitting?",
 "svc3.p": "Free for any use that meets the AGPL's terms, including its source-sharing obligations. If your company wants to build it into a product of its own, that needs a commercial license, with terms worked out case by case. This counter is where you start that conversation.",
 "svc3.g": "Arrange a license →",
-"svc.note": "Reports are public GitHub issues (a free GitHub account is needed to file one). Every report lands in the maintainer's inbox.",
+"svc.note": "Bug reports and feature requests are public GitHub issues and require a free account. Licensing inquiries use the private contact form.",
 "g.t": "Engineered Not to Corrupt",
 "g.p1": "Saves either complete perfectly or change nothing, never half. Automatic backups before every change. And one extra wire, because this is a spreadsheet: before a release ships, every kind of edit is checked against Excel's own math. The wiring gets inspected before the power goes on.",
 "g.p2": "Provided as-is, without warranty of any kind, per the license; the engineering above is simply how seriously your workbooks are taken. Keep backups. (It makes them for you.)",
@@ -1296,10 +1331,13 @@ en: {
 "fam4.g": "Visit the garden aisle →",
 "f.left": "&copy; 2026 Alvut Consulting, LLC &middot; Licensed <b>AGPL-3.0</b>: free for any use that meets the AGPL's terms, including its source-sharing obligations.<br>Commercial licenses for organizations that need to ship these in closed products (<a href='mailto:licensing@kitchensink4.ai'>licensing@kitchensink4.ai</a>).",
 "f.corp": "The office upstairs: KitchenSink4AI →",
-"f.right": "<a href='https://github.com/KitchenSink4AI/KitchenSink4XL'>github.com/KitchenSink4AI/KitchenSink4XL</a> · <a href='https://github.com/KitchenSink4AI/KitchenSink4XL/issues/new/choose'>report a glitch</a><br>Built on the KitchenSink4Word safety core, prototyped with Claude Code, and wired up under inspection until the numbers came back honest. Mind the live parts. 🔌"
+"f.right": "<a href=\"https://github.com/KitchenSink4AI/KitchenSink4XL\">Source code</a> · <a href=\"https://github.com/KitchenSink4AI/KitchenSink4XL/issues/new/choose\">Report a glitch</a>"
 },
 ko: {
 "pageTitle": "KitchenSink4XL: Microsoft Excel 도구라면 없는 게 없는 MCP 서버",
+"f.privacy": "개인정보",
+"f.contact": "문의",
+"m.company": "회사",
 "m.left": "<b>전기 부문</b> &middot; 배선까지 완비된 통합 문서를 위한 정밀 기구점",
 "m.catalog": "카탈로그 № 69",
 "m.family": "제품군",
@@ -1321,7 +1359,6 @@ ko: {
 "hero.invite": "↓ 아니면 아무도 말해 주지 않는 이야기부터: AI가 스프레드시트에서 읽어 온 숫자가 틀릴 수 있는 이유",
 "h2.new": "선반에 새로 올라온 것",
 "new.label": "신규 입고",
-"new.t": "버전 1.2가 방금 더한 것들",
 "new.sub": "이번 릴리스를 짧게 간추렸습니다. 변경 내역을 따로 읽지 않으셔도 됩니다.",
 "new1": "<b>일부 AI 클라이언트에 필요한 스키마.</b> 예전에는 도구 매개변수 39개가 빈 스키마를 내보냈고, 그것 때문에 도구를 조용히 빼 버리는 클라이언트가 있었습니다. 이제 매개변수 500개 전부가 제대로 된 스키마를 지니며, 실제 연결에서 확인했습니다.",
 "new2": "<b>조건부 서식 여섯 가지 추가, 그리고 그룹화.</b> 고유 값, 중복 값, 평균 초과와 평균 미만, 기간, 공백, 오류가 규칙에 더해졌고, 이제 행과 열을 그룹으로 묶고 접고 다시 읽어 올 수 있습니다.",
@@ -1451,7 +1488,7 @@ ko: {
 "svc3.t": "상업용 설치인가요?",
 "svc3.p": "소스 공개 의무를 포함한 AGPL 조건을 충족하는 모든 용도에 무료입니다. 회사가 자사 제품에 넣으려 한다면 상업용 라이선스가 필요하며, 조건은 사안별로 정합니다. 그 대화는 이 창구에서 시작합니다.",
 "svc3.g": "라이선스 문의 →",
-"svc.note": "접수는 공개 GitHub 이슈로 처리됩니다(등록하려면 무료 GitHub 계정이 필요합니다). 모든 접수는 관리자의 받은편지함으로 들어갑니다.",
+"svc.note": "버그 신고와 기능 요청은 무료 계정이 필요한 공개 GitHub 이슈입니다. 라이선스 문의는 비공개 문의 양식을 이용하세요.",
 "g.t": "손상시키지 않도록 설계",
 "g.p1": "저장은 완벽하게 끝나거나 아무것도 바꾸지 않거나 둘 중 하나이며, 절반만 되는 일은 없습니다. 모든 변경 전에 자동으로 백업을 만듭니다. 그리고 이것은 스프레드시트이므로 선이 하나 더 있습니다. 릴리스가 나가기 전에 모든 종류의 편집을 Excel 자체의 계산과 대조합니다. 전원을 넣기 전에 배선을 점검하는 셈입니다.",
 "g.p2": "라이선스에 따라 어떠한 보증도 없이 있는 그대로 제공됩니다. 위의 엔지니어링은 당신의 통합 문서를 얼마나 진지하게 다루는지를 보여 줄 뿐입니다. 백업을 남겨 두세요. (이 서버가 대신 만들어 둡니다.)",
@@ -1467,10 +1504,13 @@ ko: {
 "fam4.g": "원예 통로 둘러보기 →",
 "f.left": "&copy; 2026 Alvut Consulting, LLC &middot; <b>AGPL-3.0</b> 라이선스: 소스 공개 의무를 포함한 AGPL 조건을 충족하는 모든 사용에는 무료입니다.<br>비공개 제품에 담아 배포해야 하는 조직을 위한 상업용 라이선스(<a href='mailto:licensing@kitchensink4.ai'>licensing@kitchensink4.ai</a>).",
 "f.corp": "위층 사무실: KitchenSink4AI →",
-"f.right": "<a href='https://github.com/KitchenSink4AI/KitchenSink4XL'>github.com/KitchenSink4AI/KitchenSink4XL</a> · <a href='https://github.com/KitchenSink4AI/KitchenSink4XL/issues/new/choose'>문제 신고</a><br>KitchenSink4Word의 안전 코어 위에 세우고, Claude Code로 시제품을 만들고, 숫자가 정직하게 돌아올 때까지 점검을 받으며 배선했습니다. 활선 주의. 🔌"
+"f.right": "<a href=\"https://github.com/KitchenSink4AI/KitchenSink4XL\">소스 코드</a> · <a href=\"https://github.com/KitchenSink4AI/KitchenSink4XL/issues/new/choose\">오류 신고</a>"
 },
 ja: {
 "pageTitle": "KitchenSink4XL: Microsoft Excel のためのなんでも入り MCP サーバー",
+"f.privacy": "プライバシー",
+"f.contact": "お問い合わせ",
+"m.company": "会社",
 "m.left": "<b>電気売り場</b> &middot; 配線まで行き届いたブックのための精密器具店",
 "m.catalog": "カタログ № 69",
 "m.family": "ファミリー",
@@ -1492,7 +1532,6 @@ ja: {
 "hero.invite": "↓ それとも、誰も教えてくれない話から: AI が表計算から読み上げた数字が間違っていることがある理由",
 "h2.new": "棚に並んだ新入荷",
 "new.label": "新入荷",
-"new.t": "v1.2 で新しく加わったもの",
 "new.sub": "リリースの要点だけ。変更履歴を読む必要はありません。",
 "new1": "<b>一部の AI クライアントが必要とするスキーマ。</b> これまでツールの引数 39 個が空のスキーマを出しており、それを理由に黙ってツールを外すクライアントがありました。今は 500 個すべての引数が実体のあるスキーマを持ち、実際の接続で確かめてあります。",
 "new2": "<b>条件付き書式が六つ増え、グループ化も。</b> 一意の値、重複する値、平均より上と下、期間、空白、エラーが規則に加わりました。行と列はグループにまとめ、折りたたみ、読み返せるようになりました。",
@@ -1622,7 +1661,7 @@ ja: {
 "svc3.t": "業務用の取り付けですか?",
 "svc3.p": "ソースコード公開義務を含むAGPLの条件を満たすあらゆる用途で無料です。会社が自社製品に組み込む場合は商用ライセンスが必要で、条件は案件ごとに決めます。その相談はこの窓口から始まります。",
 "svc3.g": "ライセンスを相談する →",
-"svc.note": "受付は公開の GitHub イシューです(登録には無料の GitHub アカウントが必要です)。届いたものはすべて管理者の受信箱に入ります。",
+"svc.note": "不具合報告と機能リクエストは無料アカウントが必要な公開GitHub Issueです。ライセンスのご相談は非公開のお問い合わせフォームへ。",
 "g.t": "壊さないための設計",
 "g.p1": "保存は完全に終わるか、何も変えないかのどちらかで、途中で止まることはありません。すべての変更の前に自動でバックアップを取ります。そしてこれは表計算なので、もう一本の線があります。リリースを出す前に、あらゆる種類の編集をExcel自身の計算と突き合わせるのです。電気を入れる前に配線を点検する、というわけです。",
 "g.p2": "ライセンスに従い、いかなる保証もなく現状のまま提供されます。上の作り込みは、あなたのブックをどれだけ真剣に扱っているかを示すだけです。バックアップは残してください。(このサーバーが代わりに作ります。)",
@@ -1638,10 +1677,13 @@ ja: {
 "fam4.g": "園芸の売り場へ →",
 "f.left": "&copy; 2026 Alvut Consulting, LLC &middot; <b>AGPL-3.0</b> ライセンス: ソースコード公開義務を含むAGPLの条件を満たすあらゆる用途で無料です。<br>クローズドな製品に組み込んで提供する必要がある組織向けには商用ライセンスをご用意しています(<a href='mailto:licensing@kitchensink4.ai'>licensing@kitchensink4.ai</a>)。",
 "f.corp": "上の階の事務所：KitchenSink4AI →",
-"f.right": "<a href='https://github.com/KitchenSink4AI/KitchenSink4XL'>github.com/KitchenSink4AI/KitchenSink4XL</a> · <a href='https://github.com/KitchenSink4AI/KitchenSink4XL/issues/new/choose'>不具合を報告</a><br>KitchenSink4Word の安全コアの上に建て、Claude Code で試作し、数字が正直に返ってくるまで点検を受けながら配線しました。通電部にご注意。🔌"
+"f.right": "<a href=\"https://github.com/KitchenSink4AI/KitchenSink4XL\">ソースコード</a> · <a href=\"https://github.com/KitchenSink4AI/KitchenSink4XL/issues/new/choose\">不具合を報告</a>"
 },
 zh: {
 "pageTitle": "KitchenSink4XL: 为 Microsoft Excel 备齐一切的 MCP 服务器",
+"f.privacy": "隐私",
+"f.contact": "联系",
+"m.company": "公司",
 "m.left": "<b>电工部</b> &middot; 为布线齐全的工作簿准备的精密器具",
 "m.catalog": "目录 № 69",
 "m.family": "家族",
@@ -1663,7 +1705,6 @@ zh: {
 "hero.invite": "↓ 或者从没人告诉你的那一段说起: 为什么 AI 从表格里念出来的数字可能是错的",
 "h2.new": "新上架",
 "new.label": "新到货",
-"new.t": "v1.2 刚刚添了什么",
 "new.sub": "这次发布的简短版,不用去翻更新日志。",
 "new1": "<b>有些 AI 客户端要的 schema。</b> 从前有 39 个工具参数交出空 schema，有的客户端会因此悄悄把工具撤下。现在 500 个参数全都带着实打实的 schema，并在真实连接上验过。",
 "new2": "<b>再添六种条件格式，外加分组。</b> 唯一值、重复值、高于与低于平均、时间段、空白、错误都进了规则集；行和列现在可以分组、折叠，也能读回来。",
@@ -1793,7 +1834,7 @@ zh: {
 "svc3.t": "商用安装?",
 "svc3.p": "凡符合 AGPL 条款(含其源码公开义务)的用途均免费。若贵公司想把它做进自家产品,那需要一份商用许可,条款逐案商定。这个柜台就是这场对话的起点。",
 "svc3.g": "洽谈许可 →",
-"svc.note": "报单都是公开的 GitHub issue(提交需要一个免费的 GitHub 账号)。每一单都会进到维护者的收件箱。",
+"svc.note": "错误报告和功能请求是公开的GitHub议题，需要免费账户。许可咨询请使用私密联系表单。",
 "g.t": "为“不损坏”而设计",
 "g.p1": "保存要么完整做完,要么什么都不改,绝不会做一半。每次改动之前都会自动备份。还多接了一根线,因为这是表格:每次发版之前,每一种编辑都要拿Excel自己的算法核对一遍。通电之前先验线路。",
 "g.p2": "依许可证按现状提供,不含任何形式的保证; 上面这些工程只是表明你的工作簿被认真对待到什么程度。请留好备份。(它会替你做。)",
@@ -1809,10 +1850,13 @@ zh: {
 "fam4.g": "去园艺通道 →",
 "f.left": "&copy; 2026 Alvut Consulting, LLC &middot; 依 <b>AGPL-3.0</b> 授权: 凡符合 AGPL 条款(含其源码公开义务)的用途均免费。<br>需要把这些装进闭源产品发行的组织可购买商业许可(<a href='mailto:licensing@kitchensink4.ai'>licensing@kitchensink4.ai</a>)。",
 "f.corp": "楼上的办公室：KitchenSink4AI →",
-"f.right": "<a href='https://github.com/KitchenSink4AI/KitchenSink4XL'>github.com/KitchenSink4AI/KitchenSink4XL</a> · <a href='https://github.com/KitchenSink4AI/KitchenSink4XL/issues/new/choose'>报告故障</a><br>建在 KitchenSink4Word 的安全内核之上,用 Claude Code 做出原型,一路带检验地接线,直到数字诚实为止。当心带电部位。🔌"
+"f.right": "<a href=\"https://github.com/KitchenSink4AI/KitchenSink4XL\">源代码</a> · <a href=\"https://github.com/KitchenSink4AI/KitchenSink4XL/issues/new/choose\">报告问题</a>"
 },
 de: {
 "pageTitle": "KitchenSink4XL: Alles und die Spüle dazu für Microsoft Excel",
+"f.privacy": "Datenschutz",
+"f.contact": "Kontakt",
+"m.company": "UNTERNEHMEN",
 "m.left": "<b>ELEKTROABTEILUNG</b> &middot; FEINE INSTRUMENTE FÜR DIE VOLL VERKABELTE ARBEITSMAPPE",
 "m.catalog": "KATALOG № 69",
 "m.family": "FAMILIE",
@@ -1834,7 +1878,6 @@ de: {
 "hero.invite": "↓ oder fangen Sie da an, wo es Ihnen sonst niemand sagt: warum die Zahlen, die eine KI aus einer Tabelle vorliest, falsch sein können",
 "h2.new": "Neu im Regal",
 "new.label": "NEU EINGETROFFEN",
-"new.t": "Was Version 1.2 gerade dazugelegt hat",
 "new.sub": "Die kurze Fassung des Releases, ganz ohne Changelog zu lesen.",
 "new1": "<b>Schemas, die manche KI-Clients brauchen.</b> 39 Werkzeugparameter gaben bisher leere Schemas heraus, und manche Clients werfen Werkzeuge deswegen stillschweigend hinaus. Jetzt tragen alle 500 Parameter richtige Schemas, über eine echte Verbindung geprüft.",
 "new2": "<b>Sechs bedingte Formate mehr, dazu Gruppierung.</b> Eindeutige Werte, Duplikate, über und unter dem Durchschnitt, Zeitraum, Leerzellen und Fehler kommen zum Regelsatz dazu, und Zeilen und Spalten lassen sich nun gruppieren, einklappen und wieder auslesen.",
@@ -1964,7 +2007,7 @@ de: {
 "svc3.t": "Gewerbliche Montage?",
 "svc3.p": "Kostenlos für jede Nutzung, die die Bedingungen der AGPL einschließlich ihrer Pflicht zur Quelloffenlegung erfüllt. Will Ihr Unternehmen es in ein eigenes Produkt einbauen, braucht es eine kommerzielle Lizenz, die Bedingungen klären wir im Einzelfall. An diesem Tresen beginnt dieses Gespräch.",
 "svc3.g": "Lizenz besprechen →",
-"svc.note": "Meldungen sind öffentliche GitHub-Issues (zum Einreichen genügt ein kostenloses GitHub-Konto). Jede Meldung landet im Postfach des Betreuers.",
+"svc.note": "Fehlerberichte und Funktionswünsche sind öffentliche GitHub-Issues und erfordern ein kostenloses Konto. Lizenzanfragen laufen über das private Kontaktformular.",
 "g.t": "Konstruiert mit dem Ziel, nichts zu beschädigen",
 "g.p1": "Speichern läuft entweder vollständig durch oder ändert gar nichts, nie zur Hälfte. Automatische Sicherungen vor jeder Änderung. Und eine zusätzliche Leitung, weil dies eine Tabelle ist: Bevor eine Version ausgeliefert wird, wird jede Art von Bearbeitung gegen Excels eigene Rechnung geprüft. Die Verkabelung wird abgenommen, bevor der Strom eingeschaltet wird.",
 "g.p2": "Wird gemäß Lizenz ohne jede Gewährleistung so bereitgestellt, wie sie ist; die Technik oben zeigt nur, wie ernst Ihre Arbeitsmappen genommen werden. Behalten Sie Sicherungen. (Er legt sie für Sie an.)",
@@ -1980,10 +2023,13 @@ de: {
 "fam4.g": "Zum Gartengang →",
 "f.left": "&copy; 2026 Alvut Consulting, LLC &middot; Lizenziert unter <b>AGPL-3.0</b>: kostenlos für jede Nutzung, die die Bedingungen der AGPL einschließlich ihrer Pflicht zur Quelloffenlegung erfüllt.<br>Kommerzielle Lizenzen für Organisationen, die diese in geschlossenen Produkten ausliefern müssen (<a href='mailto:licensing@kitchensink4.ai'>licensing@kitchensink4.ai</a>).",
 "f.corp": "Das Büro über dem Laden: KitchenSink4AI →",
-"f.right": "<a href='https://github.com/KitchenSink4AI/KitchenSink4XL'>github.com/KitchenSink4AI/KitchenSink4XL</a> · <a href='https://github.com/KitchenSink4AI/KitchenSink4XL/issues/new/choose'>Störung melden</a><br>Auf dem Sicherheitskern von KitchenSink4Word gebaut, mit Claude Code als Prototyp entstanden und unter Abnahme verkabelt, bis die Zahlen ehrlich zurückkamen. Vorsicht, spannungsführende Teile. 🔌"
+"f.right": "<a href=\"https://github.com/KitchenSink4AI/KitchenSink4XL\">Quellcode</a> · <a href=\"https://github.com/KitchenSink4AI/KitchenSink4XL/issues/new/choose\">Fehler melden</a>"
 },
 fr: {
 "pageTitle": "KitchenSink4XL : tout et l'évier avec, pour Microsoft Excel",
+"f.privacy": "Confidentialité",
+"f.contact": "Contact",
+"m.company": "ENTREPRISE",
 "m.left": "<b>RAYON ÉLECTRICITÉ</b> &middot; INSTRUMENTS DE PRÉCISION POUR LE CLASSEUR ENTIÈREMENT CÂBLÉ",
 "m.catalog": "CATALOGUE № 69",
 "m.family": "FAMILLE",
@@ -2005,7 +2051,6 @@ fr: {
 "hero.invite": "↓ ou commencez par ce que personne ne vous dit : pourquoi les chiffres qu'une IA lit dans un tableur peuvent être faux",
 "h2.new": "Nouveautés en rayon",
 "new.label": "ARRIVAGE",
-"new.t": "Ce que la version 1.2 vient d'ajouter",
 "new.sub": "La version courte de la mise à jour, sans lire les notes de version.",
 "new1": "<b>Les schémas dont certains clients d'IA ont besoin.</b> 39 paramètres d'outil renvoyaient un schéma vide, et certains clients retirent alors les outils sans rien dire. Les 500 paramètres portent désormais de vrais schémas, vérifiés sur une connexion réelle.",
 "new2": "<b>Six mises en forme conditionnelles de plus, et le groupement.</b> Valeurs uniques, doublons, au-dessus et en dessous de la moyenne, période, cellules vides et erreurs rejoignent le jeu de règles, et les lignes et colonnes se groupent, se replient et se relisent.",
@@ -2135,7 +2180,7 @@ fr: {
 "svc3.t": "Installation commerciale ?",
 "svc3.p": "Gratuit pour tout usage conforme aux conditions de l'AGPL, y compris son obligation de partage du code source. Si votre entreprise veut l'intégrer à un produit maison, il faut une licence commerciale, aux conditions négociées au cas par cas. C'est à ce comptoir que la conversation commence.",
 "svc3.g": "Discuter d'une licence →",
-"svc.note": "Les rapports sont des tickets GitHub publics (un compte GitHub gratuit suffit pour en déposer un). Chaque rapport arrive dans la boîte du mainteneur.",
+"svc.note": "Les signalements et demandes de fonctionnalités sont des tickets GitHub publics et nécessitent un compte gratuit. Pour les licences, utilisez le formulaire de contact privé.",
 "g.t": "Conçu pour ne pas corrompre",
 "g.p1": "Les enregistrements aboutissent parfaitement ou ne changent rien du tout, jamais à moitié. Sauvegardes automatiques avant chaque modification. Et un fil de plus, parce qu'il s'agit d'un tableur : avant qu'une version ne sorte, chaque type de modification est vérifié contre les calculs d'Excel lui-même. Le câblage passe au contrôle avant qu'on mette le courant.",
 "g.p2": "Fourni tel quel, sans garantie d'aucune sorte, conformément à la licence ; l'ingénierie ci-dessus montre simplement le sérieux avec lequel vos classeurs sont traités. Gardez des sauvegardes. (Il les fait pour vous.)",
@@ -2151,10 +2196,13 @@ fr: {
 "fam4.g": "Visiter le rayon jardin →",
 "f.left": "&copy; 2026 Alvut Consulting, LLC &middot; Sous licence <b>AGPL-3.0</b> : gratuit pour tout usage conforme aux conditions de l'AGPL, y compris son obligation de partage du code source.<br>Licences commerciales pour les organisations qui doivent les diffuser dans des produits fermés (<a href='mailto:licensing@kitchensink4.ai'>licensing@kitchensink4.ai</a>).",
 "f.corp": "Le bureau à l'étage : KitchenSink4AI →",
-"f.right": "<a href='https://github.com/KitchenSink4AI/KitchenSink4XL'>github.com/KitchenSink4AI/KitchenSink4XL</a> · <a href='https://github.com/KitchenSink4AI/KitchenSink4XL/issues/new/choose'>signaler une panne</a><br>Construit sur le noyau de sécurité de KitchenSink4Word, prototypé avec Claude Code et câblé sous contrôle jusqu'à ce que les chiffres reviennent honnêtes. Attention aux parties sous tension. 🔌"
+"f.right": "<a href=\"https://github.com/KitchenSink4AI/KitchenSink4XL\">Code source</a> · <a href=\"https://github.com/KitchenSink4AI/KitchenSink4XL/issues/new/choose\">Signaler un problème</a>"
 },
 es: {
 "pageTitle": "KitchenSink4XL: todo y el fregadero incluido, para Microsoft Excel",
+"f.privacy": "Privacidad",
+"f.contact": "Contacto",
+"m.company": "EMPRESA",
 "m.left": "<b>DEPARTAMENTO DE ELECTRICIDAD</b> &middot; INSTRUMENTOS DE PRECISIÓN PARA EL LIBRO TOTALMENTE CABLEADO",
 "m.catalog": "CATÁLOGO № 69",
 "m.family": "FAMILIA",
@@ -2176,7 +2224,6 @@ es: {
 "hero.invite": "↓ o empiece por lo que nadie le cuenta: por qué los números que una IA lee de una hoja de cálculo pueden estar mal",
 "h2.new": "Recién puesto en el estante",
 "new.label": "RECIÉN LLEGADO",
-"new.t": "Lo que acaba de añadir la versión 1.2",
 "new.sub": "La versión corta de la entrega, sin tener que leer el registro de cambios.",
 "new1": "<b>Los esquemas que necesitan algunos clientes de IA.</b> Antes 39 parámetros de herramienta salían con el esquema vacío, y hay clientes que por eso retiran herramientas sin avisar. Ahora los 500 parámetros llevan esquemas de verdad, comprobados sobre una conexión real.",
 "new2": "<b>Seis formatos condicionales más, y agrupación.</b> Valores únicos, duplicados, por encima y por debajo de la media, periodo de tiempo, celdas en blanco y errores se suman al juego de reglas, y las filas y columnas ya se pueden agrupar, plegar y volver a leer.",
@@ -2306,7 +2353,7 @@ es: {
 "svc3.t": "¿Instalación comercial?",
 "svc3.p": "Gratis para cualquier uso que cumpla los términos de la AGPL, incluida su obligación de compartir el código fuente. Si su empresa quiere integrarlo en un producto propio, hace falta una licencia comercial, con las condiciones acordadas caso por caso. En este mostrador empieza esa conversación.",
 "svc3.g": "Gestionar una licencia →",
-"svc.note": "Los partes son issues públicos de GitHub (hace falta una cuenta gratuita de GitHub para presentarlos). Cada parte llega a la bandeja del mantenedor.",
+"svc.note": "Los fallos y las solicitudes de funciones son incidencias públicas de GitHub y requieren una cuenta gratuita. Para licencias, use el formulario de contacto privado.",
 "g.t": "Diseñado para no corromper",
 "g.p1": "Los guardados o se completan del todo o no cambian nada, nunca a medias. Copias de seguridad automáticas antes de cada cambio. Y un cable de más, porque esto es una hoja de cálculo: antes de publicar una versión, cada tipo de edición se contrasta con las cuentas del propio Excel. El cableado pasa inspección antes de dar corriente.",
 "g.p2": "Se ofrece tal cual, sin garantía de ningún tipo, según la licencia; la ingeniería anterior solo muestra con cuánta seriedad se tratan sus libros. Conserve copias de seguridad. (Él las hace por usted.)",
@@ -2322,7 +2369,7 @@ es: {
 "fam4.g": "Visite el pasillo de jardín →",
 "f.left": "&copy; 2026 Alvut Consulting, LLC &middot; Con licencia <b>AGPL-3.0</b>: gratis para cualquier uso que cumpla los términos de la AGPL, incluida su obligación de compartir el código fuente.<br>Licencias comerciales para las organizaciones que necesiten distribuirlos en productos cerrados (<a href='mailto:licensing@kitchensink4.ai'>licensing@kitchensink4.ai</a>).",
 "f.corp": "La oficina de arriba: KitchenSink4AI →",
-"f.right": "<a href='https://github.com/KitchenSink4AI/KitchenSink4XL'>github.com/KitchenSink4AI/KitchenSink4XL</a> · <a href='https://github.com/KitchenSink4AI/KitchenSink4XL/issues/new/choose'>informar de un fallo</a><br>Construido sobre el núcleo de seguridad de KitchenSink4Word, prototipado con Claude Code y cableado bajo inspección hasta que los números volvieron honestos. Cuidado con las partes con tensión. 🔌"
+"f.right": "<a href=\"https://github.com/KitchenSink4AI/KitchenSink4XL\">Código fuente</a> · <a href=\"https://github.com/KitchenSink4AI/KitchenSink4XL/issues/new/choose\">Informar de un fallo</a>"
 }
 };
 /*I18N-END*/
