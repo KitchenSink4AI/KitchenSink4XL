@@ -668,6 +668,22 @@ footer .row>span{min-width:0;overflow-wrap:anywhere}
 .setup-note .term,.install-grid .term{font-size:13px}
 .setup-note .term div,.install-grid .term div{white-space:pre-wrap;overflow-wrap:anywhere}
 .route .cmd{white-space:pre-wrap;overflow-wrap:anywhere}
+
+.mcp-compat .platform-note{font-size:13px;line-height:1.6;color:var(--ink-soft);margin:12px 0 0}
+
+.desktop-steps{padding-left:22px;font-size:13px;line-height:1.65;color:var(--ink-soft);margin:12px 0 18px}.desktop-steps li{padding-left:3px;margin:0 0 10px;overflow-wrap:anywhere}.desktop-steps code{font:inherit;font-weight:700}
+
+.desktop-route-divider{border-top:1px solid var(--ink-soft);opacity:.35;margin:22px 0}
+
+.desktop-option{border-top:1px solid var(--ink-soft);margin-top:16px}
+.desktop-option summary{display:flex;align-items:center;gap:10px;list-style:none;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700;line-height:1.5;padding:14px 0;color:var(--ink)}
+.desktop-option summary::-webkit-details-marker{display:none}
+.desktop-option summary::before{content:'+';font-size:18px;line-height:1;flex:0 0 14px}
+.desktop-option[open] summary::before{content:'−'}
+.desktop-option summary:focus-visible{outline:2px solid currentColor;outline-offset:3px}
+.desktop-option-body{padding:0 0 14px}
+.platform-label,.hero .platform-label{display:table;margin:16px auto 10px;padding:8px 15px;border:2px solid var(--ink);background:var(--paper-deep);color:var(--ink);font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:700;letter-spacing:.04em;line-height:1.5;max-width:100%}
+.platform-hero-note,.hero .platform-hero-note{font-family:inherit;font-size:12px;line-height:1.6;margin:8px auto 18px;max-width:640px}
 </style>
 </head>
 <body>
@@ -706,7 +722,7 @@ footer .row>span{min-width:0;overflow-wrap:anywhere}
     <span class="livetag" data-i18n="lbl.live">Live</span>
   </div>
   <div class="catalog-no rev d2" data-i18n="hero.catno">Model Context Protocol · Server for Microsoft Excel</div>
-  <h1 class="rev d2">Kitchen&shy;Sink<span class="four">4</span>XL</h1>
+  <h1 class="rev d2">Kitchen&shy;Sink<span class="four">4</span>XL</h1><p class="platform-label" data-i18n="platform.hero">Windows · macOS · Linux</p>
   <p class="tagline rev d3" data-i18n="hero.tagline">Everything <em>plus</em> the kitchen sink for Microsoft&nbsp;Excel: the .xlsx&nbsp;MCP&nbsp;server that never hands your AI a number it cannot back up.</p>
   <p class="idiom-note rev d3" data-i18n="hero.idiom"></p>
   <div class="specs-strip rev d4"><span class="plate-tab" data-i18n="spec.plate">Ratings plate</span>
@@ -940,6 +956,7 @@ footer .row>span{min-width:0;overflow-wrap:anywhere}
 <p data-i18n="compat.lead">Works with Claude Desktop, Claude Code, Codex, and other AI apps that support local MCP servers, including open-source clients.</p>
 <p data-i18n="compat.chatgpt">ChatGPT: use a desktop app with local MCP support. ChatGPT on the web needs a separate remote connection; these downloads do not set that up.</p>
 
+<p class="platform-note" data-i18n="setup.platform">Windows, macOS and Linux for file editing. Live Excel control and recalculation through Excel require Windows and Microsoft Excel.</p>
 </div>
 <div class="setup-note"><h3 data-i18n="setup.title">First time? Start here.</h3><p data-i18n="setup.intro">These tools need a small launcher called uv. Set it up once for all four products. Already have it? Skip to your app below.</p><p data-i18n="setup.windows">On Windows, open the Start menu, type PowerShell, and open Windows PowerShell. Paste this line into that window and press Enter:</p><div class="term"><div>winget install --id=astral-sh.uv -e</div></div><p data-i18n="setup.restart">When installation finishes, close and reopen your AI app and any command windows.</p><p data-i18n="setup.help">Using a Mac, or need help? Follow the <a href="https://docs.astral.sh/uv/getting-started/installation/">uv installation guide</a>. On a work computer, your IT team may need to install it for you.</p></div>
     <p class="for-lead" style="font-size:15px;color:var(--ink-soft)" data-i18n="inst.cold">First launch through uvx downloads and builds the environment and can take 20 to 30 seconds before the server answers; every launch after that starts in about two. If a client reports a timeout on first install, launch once from a terminal and try again.</p>
@@ -947,19 +964,13 @@ footer .row>span{min-width:0;overflow-wrap:anywhere}
       <div class="step">
         <span class="badge" data-i18n="inst.b1">Easiest</span>
         <h3 data-i18n="setup.desktopTitle">Using a desktop AI app?</h3>
-        <p data-i18n="setup.desktop">Claude Desktop: download the file ending in <b>.mcpb</b> under Assets on the download page. In Claude Desktop, open <b>Settings → Extensions → Advanced settings → Install Extension</b> and select that file.</p><p data-i18n="setup.local">ChatGPT Desktop, Codex, or another app with local MCP settings: add a local server using the command and argument below, then save and restart the app. Menu names and availability vary by app.</p><div class="term"><div>Command: uvx
-Arguments: kitchensink4xl</div></div>
-        <a class="go" href="https://github.com/KitchenSink4AI/KitchenSink4XL/releases/latest" data-i18n="setup.download">Download for Claude Desktop →</a>
+        <details class="desktop-option"><summary>Claude Desktop</summary><div class="desktop-option-body"><p data-i18n="setup.desktop">Claude Desktop: download the file ending in <b>.mcpb</b> under Assets on the download page. In Claude Desktop, open <b>Settings → Extensions → Advanced settings → Install Extension</b> and select that file.</p><a class="go" href="https://github.com/KitchenSink4AI/KitchenSink4XL/releases/latest" data-i18n="setup.download">Download for Claude Desktop →</a></div></details><details class="desktop-option"><summary data-i18n="setup.otherApps">ChatGPT Desktop / other apps</summary><div class="desktop-option-body"><p data-i18n="setup.local">For ChatGPT Desktop, Codex, or another desktop app with an <b>MCP servers</b> setting:</p><ol class="desktop-steps" data-i18n="setup.fields"><li>Open <b>Settings → MCP servers → Add server</b>.</li><li>Choose <b>Local</b> or <b>STDIO</b>. This means the tool runs on your computer.</li><li>Give it a name, such as <b>KitchenSink4XL</b>. In the box labeled <b>Command</b>, enter <code>uvx</code>. In <b>Arguments</b>, enter <code>kitchensink4xl</code>.</li><li>Save, then restart the app. If these options are missing, check your app's MCP setup guide.</li></ol></div></details>
+
       </div>
       <div class="step">
         <span class="badge" data-i18n="inst.b2">One command</span>
         <h3 data-i18n="setup.cliTitle">Using Claude Code or Codex? Paste this.</h3><p data-i18n="setup.cli">With your app installed and the first-time setup complete, open PowerShell on Windows or Terminal on a Mac. Paste the command labeled for your app and press Enter. Then restart your AI session.</p><p class="client-label">Claude Code</p><div class="term"><div>claude mcp add xl -s user -- uvx kitchensink4xl</div></div><p class="client-label">Codex</p><div class="term"><div>codex mcp add xl -- uvx kitchensink4xl</div></div>
       </div>
-    </div>
-    <div class="tipcard">
-      <span class="badge" data-i18n="inst.tipb">Do this first</span>
-      <h3 id="tip" data-i18n="inst.tipt">One tip that removes most permission pop-ups</h3>
-      <p data-i18n="inst.tipp">In Claude Desktop's <code>Tool permissions</code> for this server, set the <code>Read-only tools</code> group to <code>Always Allow</code>. Those tools cannot change anything, so approving them once is safe, and Claude stops asking about every read. Leave the acting tools on <code>Ask</code>, so anything that changes things still checks with you first.</p>
     </div>
     <details class="devfold" data-plate="Behind the panel">
       <summary data-i18n="inst.dev">For developers: pip, uvx, source, other MCP clients</summary>
@@ -969,7 +980,6 @@ Arguments: kitchensink4xl</div></div>
         <p data-i18n="inst.dp2">Then in any client's config: <code>{"mcpServers": {"xl": {"command": "kitchensink4xl", "env": {"KS4XL_MODE": "lite"}}}}</code>, where the mode is "lite" (the default), "full", or a comma-separated pack list. Running from a clone works the same way; point the command at the <code>xl-mcp</code> executable in the clone's virtual environment. The COM pack is an optional extra, <code>pip install kitchensink4xl[com]</code>, and it is a no-op off Windows. On Windows the COM dependency often arrives transitively with the base install; installing with <code>[com]</code> is the guaranteed route either way, and harmless to repeat. Full setup in the <a href="https://github.com/KitchenSink4AI/KitchenSink4XL#install">README</a>.</p>
       </div>
     </details>
-    <p class="foot-note" style="margin-top:18px" data-i18n="inst.note">Most of this server needs no Excel installed at all and runs on any computer. The parts that ask Excel to do the work want Windows with Excel on it, and they open their own private copy, so the workbook you have on screen is never touched.</p>
   </div>
 </section>
 
@@ -1307,9 +1317,11 @@ en: {
 "eff.s3": "Call to the whole sink",
 "eff.note": "The lite core carries no degraded stand-ins, so the lazy path is a dead end on purpose: a refusal for out-of-scope work names the exact pack and the exact call that unlocks it. Power users who want everything loaded from the start can pin it with <b>KS4XL_MODE=full</b> in the server environment, or a comma-separated pack list. Administrators can lock the selection with KS4XL_PACK_POLICY=locked.",
 "h2.install": "Wiring it in",
-"inst.lead": "Pick the line that describes you. Most people are the first one.",
 "inst.cold": "First launch through uvx downloads and builds the environment and can take 20 to 30 seconds before the server answers; every launch after that starts in about two. If a client reports a timeout on first install, launch once from a terminal and try again.",
 "inst.b1": "Easiest",
+"setup.platform": "Windows, macOS and Linux for file editing. Live Excel control and recalculation through Excel require Windows and Microsoft Excel.",
+"setup.otherApps": "ChatGPT Desktop / other apps",
+"platform.hero": "Windows · macOS · Linux",
 "setup.title": "First time? Start here.",
 "setup.intro": "These tools need a small launcher called uv. Set it up once for all four products. Already have it? Skip to your app below.",
 "setup.windows": "On Windows, open the Start menu, type PowerShell, and open Windows PowerShell. Paste this line into that window and press Enter:",
@@ -1320,23 +1332,14 @@ en: {
 "setup.desktopTitle": "Using a desktop AI app?",
 "setup.desktop": "Claude Desktop: download the file ending in <b>.mcpb</b> under Assets on the download page. In Claude Desktop, open <b>Settings → Extensions → Advanced settings → Install Extension</b> and select that file.",
 "setup.download": "Download for Claude Desktop →",
-"setup.local": "ChatGPT Desktop, Codex, or another app with local MCP settings: add a local server using the command and argument below, then save and restart the app. Menu names and availability vary by app.",
+"setup.local": "For ChatGPT Desktop, Codex, or another desktop app with an <b>MCP servers</b> setting:",
+"setup.fields": "<li>Open <b>Settings → MCP servers → Add server</b>.</li><li>Choose <b>Local</b> or <b>STDIO</b>. This means the tool runs on your computer.</li><li>Give it a name, such as <b>KitchenSink4XL</b>. In the box labeled <b>Command</b>, enter <code>uvx</code>. In <b>Arguments</b>, enter <code>kitchensink4xl</code>.</li><li>Save, then restart the app. If these options are missing, check your app's MCP setup guide.</li>",
 "compat.lead": "Works with Claude Desktop, Claude Code, Codex, and other AI apps that support local MCP servers, including open-source clients.",
 "compat.chatgpt": "ChatGPT: use a desktop app with local MCP support. ChatGPT on the web needs a separate remote connection; these downloads do not set that up.",
-"compat.codex": "Codex setup",
-"compat.pre": "Install uv first, then run:",
-"compat.other": "Other clients: use uvx as the command and the package name as its argument. Follow your app's MCP setup instructions.",
-"inst.s1": "Using Claude Desktop? One double-click.",
-"inst.p1": "Download the installer bundle from the latest release and double-click it, or drag it into the Claude Desktop window. Desktop adds it as an extension and the sink is connected. Nothing to type, nothing to configure.",
-"inst.g1": "Download the .mcpb bundle →",
-"inst.p1b": "One-time requirement: <a href=\"https://docs.astral.sh/uv/\">uv</a> on your PATH, which the bundle uses to start the server.",
 "inst.b2": "One command",
-"inst.s2": "Using Claude Code? Paste this.",
-"inst.p2": "One line in a terminal and you are done. It fetches and runs the server for you, so there is nothing to install first.",
 "inst.dev": "For developers: pip, uvx, source, other MCP clients",
 "inst.dp1": "Install the package and point any MCP client at the executable:",
 "inst.dp2": "Then in any client's config: <code>{\"mcpServers\": {\"xl\": {\"command\": \"kitchensink4xl\", \"env\": {\"KS4XL_MODE\": \"lite\"}}}}</code>, where the mode is \"lite\" (the default), \"full\", or a comma-separated pack list. Running from a clone works the same way; point the command at the <code>xl-mcp</code> executable in the clone's virtual environment. The COM pack is an optional extra, <code>pip install kitchensink4xl[com]</code>, and it is a no-op off Windows. On Windows the COM dependency often arrives transitively with the base install; installing with <code>[com]</code> is the guaranteed route either way, and harmless to repeat. Full setup in the <a href=\"https://github.com/KitchenSink4AI/KitchenSink4XL#install\">README</a>.",
-"inst.note": "Most of this server needs no Excel installed at all and runs on any computer. The parts that ask Excel to do the work want Windows with Excel on it, and they open their own private copy, so the workbook you have on screen is never touched.",
 "inst.tipt": "One tip that removes most permission pop-ups",
 "inst.tipp": "In Claude Desktop's <code>Tool permissions</code> for this server, set the <code>Read-only tools</code> group to <code>Always Allow</code>. Those tools cannot change anything, so approving them once is safe, and Claude stops asking about every read. Leave the acting tools on <code>Ask</code>, so anything that changes things still checks with you first.",
 "inst.tipb": "Do this first",
@@ -1496,9 +1499,11 @@ ko: {
 "eff.s3": "싱크대 전체까지 호출 수",
 "eff.note": "라이트 코어에는 기능을 흉내 낸 대체품이 없습니다. 그래서 대충 넘어가는 길은 일부러 막다른 길입니다. 범위를 벗어난 작업은 거절하면서 어떤 팩과 어떤 호출이 그것을 여는지 정확히 알려 줍니다. 처음부터 전부 올려 두고 싶은 분은 서버 환경에 <b>KS4XL_MODE=full</b>을 지정하거나 쉼표로 구분한 팩 목록을 넣으시면 됩니다. 관리자는 KS4XL_PACK_POLICY=locked로 선택을 고정할 수 있습니다.",
 "h2.install": "설치와 배선",
-"inst.lead": "본인에게 해당하는 줄을 고르세요. 대부분은 첫 번째입니다.",
 "inst.cold": "uvx로 처음 실행할 때는 환경을 내려받아 구성하기 때문에 서버가 응답하기까지 20~30초가 걸릴 수 있습니다. 그다음부터는 2초 정도면 시작합니다. 설치 직후 클라이언트가 시간 초과를 알리면, 터미널에서 한 번 실행한 다음 다시 시도해 보세요.",
 "inst.b1": "가장 쉬움",
+"setup.platform": "파일 편집은 Windows, macOS, Linux를 지원합니다. 실행 중인 Excel 제어와 Excel을 통한 재계산에는 Windows와 Microsoft Excel이 필요합니다.",
+"setup.otherApps": "ChatGPT Desktop / 다른 앱",
+"platform.hero": "Windows · macOS · Linux",
 "setup.title": "처음이라면 여기부터 시작하세요.",
 "setup.intro": "이 도구에는 uv라는 작은 실행 프로그램이 필요합니다. 네 제품에 대해 한 번만 설치하면 됩니다. 이미 있다면 아래에서 앱을 선택하세요.",
 "setup.windows": "Windows 시작 메뉴에서 PowerShell을 검색하고 Windows PowerShell을 여세요. 아래 명령을 그 창에 붙여 넣고 Enter를 누르세요:",
@@ -1509,23 +1514,14 @@ ko: {
 "setup.desktopTitle": "데스크톱 AI 앱을 사용하시나요?",
 "setup.desktop": "Claude Desktop: 다운로드 페이지의 Assets에서 <b>.mcpb</b> 파일을 받으세요. Claude Desktop의 <b>Settings → Extensions → Advanced settings → Install Extension</b>에서 해당 파일을 선택하세요.",
 "setup.download": "Claude Desktop용 다운로드 →",
-"setup.local": "ChatGPT Desktop, Codex 또는 로컬 MCP 설정이 있는 앱에서는 아래 명령과 인수로 로컬 서버를 추가하고 저장한 뒤 앱을 다시 시작하세요. 메뉴 이름과 지원 여부는 앱에 따라 다릅니다.",
+"setup.local": "ChatGPT Desktop, Codex 또는 <b>MCP servers</b> 설정이 있는 데스크톱 앱:",
+"setup.fields": "<li><b>Settings → MCP servers → Add server</b>를 여세요.</li><li><b>Local</b> 또는 <b>STDIO</b>를 선택하세요. 내 컴퓨터에서 도구를 실행한다는 뜻입니다.</li><li>이름을 <b>KitchenSink4XL</b>처럼 정하세요. <b>Command</b> 입력란에 <code>uvx</code>, <b>Arguments</b> 입력란에 <code>kitchensink4xl</code>를 입력하세요.</li><li>저장한 뒤 앱을 다시 시작하세요. 해당 옵션이 없으면 앱의 MCP 설정 안내를 확인하세요.</li>",
 "compat.lead": "Claude Desktop, Claude Code, Codex 및 로컬 MCP 서버를 지원하는 다른 AI 앱과 함께 사용할 수 있습니다. 오픈소스 클라이언트도 포함됩니다.",
 "compat.chatgpt": "ChatGPT: 로컬 MCP를 지원하는 데스크톱 앱을 사용하세요. 웹 ChatGPT에는 별도의 원격 연결이 필요하며, 이 다운로드에는 해당 설정이 포함되지 않습니다.",
-"compat.codex": "Codex 설정",
-"compat.pre": "먼저 uv를 설치한 다음 실행하세요:",
-"compat.other": "다른 클라이언트에서는 명령을 uvx로, 인수를 패키지 이름으로 지정하세요. 앱의 MCP 설정 안내를 따르세요.",
-"inst.s1": "Claude Desktop을 쓰신다면, 더블클릭 한 번.",
-"inst.p1": "최신 릴리스에서 설치 번들을 내려받아 더블클릭하거나 Claude Desktop 창에 끌어다 놓으세요. Desktop이 확장으로 추가하면 싱크대가 연결됩니다. 입력할 것도, 설정할 것도 없습니다.",
-"inst.g1": ".mcpb 번들 내려받기 →",
-"inst.p1b": "한 번만 필요한 것: PATH에 <a href=\"https://docs.astral.sh/uv/\">uv</a>가 있어야 합니다. 번들이 서버를 띄울 때 사용합니다.",
 "inst.b2": "명령 한 줄",
-"inst.s2": "Claude Code를 쓰신다면, 이걸 붙여넣으세요.",
-"inst.p2": "터미널에 한 줄이면 끝입니다. 서버를 알아서 받아서 실행하므로 미리 설치할 것이 없습니다.",
 "inst.dev": "개발자용: pip, uvx, 소스, 다른 MCP 클라이언트",
 "inst.dp1": "패키지를 설치하고 아무 MCP 클라이언트나 실행 파일을 가리키게 하세요.",
 "inst.dp2": "그런 다음 클라이언트 설정에 <code>{\"mcpServers\": {\"xl\": {\"command\": \"kitchensink4xl\", \"env\": {\"KS4XL_MODE\": \"lite\"}}}}</code>를 넣습니다. 모드는 \"lite\"(기본값), \"full\", 또는 쉼표로 구분한 팩 목록입니다. 클론에서 바로 쓰실 때도 같습니다. 클론의 가상 환경에 있는 <code>xl-mcp</code> 실행 파일을 가리키면 됩니다. COM 팩은 선택 확장이며(<code>pip install kitchensink4xl[com]</code>), Windows가 아니면 아무 일도 하지 않습니다. Windows에서는 COM 의존성이 기본 설치만으로도 함께 딸려 오는 경우가 많습니다. 그래도 <code>[com]</code>으로 설치하는 쪽이 확실한 방법이고, 한 번 더 해도 아무 문제 없습니다. 전체 설정은 <a href=\"https://github.com/KitchenSink4AI/KitchenSink4XL#install\">README</a>에 있습니다.",
-"inst.note": "이 서버의 대부분은 Excel 설치가 전혀 필요 없고 어느 컴퓨터에서나 돌아갑니다. Excel에게 직접 일을 시키는 부분만 Excel이 설치된 Windows를 요구하며, 그때도 자기만의 숨겨진 사본을 열기 때문에 화면에 띄워 둔 통합 문서는 건드리지 않습니다.",
 "inst.tipt": "권한 팝업을 대부분 없애 주는 요령 하나",
 "inst.tipp": "Claude Desktop에서 이 서버의 <code>Tool permissions</code>를 열고, <code>Read-only tools</code> 그룹을 <code>Always Allow</code>로 바꾸세요. 이 도구들은 아무것도 바꾸지 못하므로 한 번 허용해도 안전하고, Claude가 읽을 때마다 묻는 일이 없어집니다. 실제로 작업하는 도구는 <code>Ask</code>로 그대로 두세요. 무언가를 바꾸는 일은 여전히 먼저 당신에게 확인합니다.",
 "inst.tipb": "먼저 이것부터",
@@ -1685,9 +1681,11 @@ ja: {
 "eff.s3": "流し一式までの呼び出し",
 "eff.note": "ライトコアには機能の劣化版の代役を置いていません。だから手抜きの道はわざと行き止まりです。範囲外の仕事は断りつつ、どのパックのどの呼び出しでそれが開くかを正確に告げます。最初から全部を載せたい方は、サーバー環境に <b>KS4XL_MODE=full</b> を指定するか、カンマ区切りのパック一覧を書いてください。管理者は KS4XL_PACK_POLICY=locked で選択を固定できます。",
 "h2.install": "取り付けと配線",
-"inst.lead": "自分に当てはまる行を選んでください。たいていの方は一つ目です。",
 "inst.cold": "uvx で最初に起動するときは環境のダウンロードと構築が走るため、サーバーが応答するまで 20 秒から 30 秒かかることがあります。二回目からは 2 秒ほどで立ち上がります。インストール直後にクライアントがタイムアウトを報告したら、ターミナルから一度起動してから、もう一度お試しください。",
 "inst.b1": "いちばん簡単",
+"setup.platform": "ファイル編集は Windows、macOS、Linux に対応。実行中の Excel の操作や Excel による再計算には Windows と Microsoft Excel が必要です。",
+"setup.otherApps": "ChatGPT Desktop / その他のアプリ",
+"platform.hero": "Windows · macOS · Linux",
 "setup.title": "初めての方はこちらから。",
 "setup.intro": "必要なのは uv という小さな起動ツールです。4 製品共通で一度だけ設定します。導入済みなら下でアプリを選んでください。",
 "setup.windows": "Windows のスタートメニューで PowerShell を検索し、Windows PowerShell を開きます。次の行をそのウィンドウに貼り付けて Enter を押してください:",
@@ -1698,23 +1696,14 @@ ja: {
 "setup.desktopTitle": "デスクトップ AI アプリをお使いですか?",
 "setup.desktop": "Claude Desktop: ダウンロードページの Assets から <b>.mcpb</b> ファイルを取得します。Claude Desktop の <b>Settings → Extensions → Advanced settings → Install Extension</b> でそのファイルを選びます。",
 "setup.download": "Claude Desktop 用にダウンロード →",
-"setup.local": "ChatGPT Desktop、Codex、その他ローカル MCP 設定があるアプリでは、下のコマンドと引数でローカルサーバーを追加し、保存してアプリを再起動します。メニュー名や対応状況はアプリによって異なります。",
+"setup.local": "ChatGPT Desktop、Codex、その他 <b>MCP servers</b> 設定があるデスクトップアプリ:",
+"setup.fields": "<li><b>Settings → MCP servers → Add server</b> を開きます。</li><li><b>Local</b> または <b>STDIO</b> を選びます。自分のコンピューターでツールを実行するという意味です。</li><li>名前を <b>KitchenSink4XL</b> などにします。<b>Command</b> 欄に <code>uvx</code>、<b>Arguments</b> 欄に <code>kitchensink4xl</code> と入力します。</li><li>保存してアプリを再起動します。項目が見つからない場合は、そのアプリの MCP 設定ガイドを確認してください。</li>",
 "compat.lead": "Claude Desktop、Claude Code、Codex、およびローカル MCP サーバーに対応する AI アプリで利用できます。オープンソースのクライアントも含みます。",
 "compat.chatgpt": "ChatGPT: ローカル MCP 対応のデスクトップアプリを使用してください。Web 版には別途リモート接続が必要です。このダウンロードでは設定されません。",
-"compat.codex": "Codex の設定",
-"compat.pre": "まず uv をインストールしてから実行:",
-"compat.other": "その他のクライアントでは、コマンドを uvx、引数をパッケージ名に設定してください。各アプリの MCP 設定手順に従ってください。",
-"inst.s1": "Claude Desktop なら、ダブルクリック一回。",
-"inst.p1": "最新リリースからインストーラーの束をダウンロードしてダブルクリックするか、Claude Desktop のウィンドウにドラッグしてください。Desktop が拡張として追加し、流しがつながります。入力するものも、設定するものもありません。",
-"inst.g1": ".mcpb バンドルをダウンロード →",
-"inst.p1b": "一度だけ必要なもの: PATH に <a href=\"https://docs.astral.sh/uv/\">uv</a> があること。バンドルがサーバーの起動に使います。",
 "inst.b2": "コマンド一行",
-"inst.s2": "Claude Code なら、これを貼るだけ。",
-"inst.p2": "端末に一行で完了です。サーバーは自動で取得して起動されるので、先に入れておくものはありません。",
 "inst.dev": "開発者向け: pip, uvx, ソース, ほかの MCP クライアント",
 "inst.dp1": "パッケージを入れて、任意の MCP クライアントから実行ファイルを指してください。",
 "inst.dp2": "そのうえでクライアントの設定に <code>{\"mcpServers\": {\"xl\": {\"command\": \"kitchensink4xl\", \"env\": {\"KS4XL_MODE\": \"lite\"}}}}</code> と書きます。モードは \"lite\"(既定)、\"full\"、またはカンマ区切りのパック一覧です。クローンから動かす場合も同じで、クローンの仮想環境にある <code>xl-mcp</code> を指してください。COM パックは任意の追加(<code>pip install kitchensink4xl[com]</code>)で、Windows 以外では何もしません。Windows では COM の依存パッケージが基本のインストールだけで一緒に入ってくることがよくあります。それでも <code>[com]</code> を付けて入れるほうが確実で、重ねて実行しても害はありません。設定の全体は <a href=\"https://github.com/KitchenSink4AI/KitchenSink4XL#install\">README</a> にあります。",
-"inst.note": "このサーバーの大半は Excel のインストールをまったく必要とせず、どのパソコンでも動きます。Excel に仕事をさせる部分だけが Excel の入った Windows を求め、そのときも自分専用の隠れた一つを開くので、画面に出したままのブックには触れません。",
 "inst.tipt": "権限のポップアップをほとんど消せるコツが一つ",
 "inst.tipp": "Claude Desktop でこのサーバーの <code>Tool permissions</code> を開き、<code>Read-only tools</code> のグループを <code>Always Allow</code> にしてください。これらの道具は何も変更できないので、一度許可しても安全で、Claude が読み取りのたびに尋ねてくることがなくなります。手を加えるほうの道具は <code>Ask</code> のままにしておいてください。何かを変える操作は、これまでどおり先にあなたに確認します。",
 "inst.tipb": "まずこれを",
@@ -1874,9 +1863,11 @@ zh: {
 "eff.s3": "到整台水槽的调用数",
 "eff.note": "精简内核里没有任何打折的替身,所以偷懒那条路是故意留成死胡同的: 超出范围的活儿会被拒绝,同时点明是哪个包、哪一次调用能把它打开。想一上来就全部装载的老手可以钉住它: 在服务器环境里设 <b>KS4XL_MODE=full</b>,或者写一份逗号分隔的包清单。管理员可以用 KS4XL_PACK_POLICY=locked 锁定选择。",
 "h2.install": "装上,接好",
-"inst.lead": "挑一条符合你的。多数人是第一条。",
 "inst.cold": "首次通过 uvx 启动时要下载并构建环境,服务器可能需要 20 到 30 秒才会响应;之后每次启动大约两秒。如果客户端在刚装好时报超时,先在终端里启动一次,然后再试。",
 "inst.b1": "最省事",
+"setup.platform": "文件编辑支持 Windows、macOS 和 Linux。控制运行中的 Excel 以及通过 Excel 重新计算需要 Windows 和 Microsoft Excel。",
+"setup.otherApps": "ChatGPT Desktop / 其他应用",
+"platform.hero": "Windows · macOS · Linux",
 "setup.title": "首次使用？从这里开始。",
 "setup.intro": "这些工具需要一个名为 uv 的小型启动程序。四款产品只需设置一次。已经安装？直接在下方选择您的应用。",
 "setup.windows": "在 Windows 开始菜单搜索 PowerShell，打开 Windows PowerShell。将下面这一行粘贴到该窗口，然后按 Enter：",
@@ -1887,23 +1878,14 @@ zh: {
 "setup.desktopTitle": "使用桌面 AI 应用？",
 "setup.desktop": "Claude Desktop：下载页面 Assets 下以 <b>.mcpb</b> 结尾的文件。在 Claude Desktop 中打开 <b>Settings → Extensions → Advanced settings → Install Extension</b>，然后选择该文件。",
 "setup.download": "下载 Claude Desktop 安装包 →",
-"setup.local": "对于 ChatGPT Desktop、Codex 或其他提供本地 MCP 设置的应用，请使用下方命令和参数添加本地服务器，保存后重启应用。菜单名称和可用性因应用而异。",
+"setup.local": "适用于 ChatGPT Desktop、Codex 或其他有 <b>MCP servers</b> 设置的桌面应用：",
+"setup.fields": "<li>打开 <b>Settings → MCP servers → Add server</b>。</li><li>选择 <b>Local</b> 或 <b>STDIO</b>，表示在您的电脑上运行工具。</li><li>为它命名，例如 <b>KitchenSink4XL</b>。在标为 <b>Command</b> 的输入框中填写 <code>uvx</code>，在 <b>Arguments</b> 中填写 <code>kitchensink4xl</code>。</li><li>保存并重启应用。如果没有这些选项，请查看该应用的 MCP 设置指南。</li>",
 "compat.lead": "支持 Claude Desktop、Claude Code、Codex 及其他支持本地 MCP 服务器的 AI 应用，包括开源客户端。",
 "compat.chatgpt": "ChatGPT：请使用支持本地 MCP 的桌面应用。网页版需要单独配置远程连接；这些下载不会完成该配置。",
-"compat.codex": "Codex 设置",
-"compat.pre": "先安装 uv，然后运行：",
-"compat.other": "其他客户端：将命令设为 uvx，参数设为包名，并按照应用的 MCP 设置说明操作。",
-"inst.s1": "用 Claude Desktop? 双击一次就好。",
-"inst.p1": "从最新版本下载安装包并双击,或者把它拖进 Claude Desktop 窗口。Desktop 会把它作为扩展装上,水槽就接通了。不用打字,不用配置。",
-"inst.g1": "下载 .mcpb 安装包 →",
-"inst.p1b": "只需一次的准备: PATH 里要有 <a href=\"https://docs.astral.sh/uv/\">uv</a>,安装包靠它来启动服务器。",
 "inst.b2": "一条命令",
-"inst.s2": "用 Claude Code? 粘这一行。",
-"inst.p2": "终端里一行就完事。它会替你取回并运行服务器,不用先装什么。",
 "inst.dev": "面向开发者: pip、uvx、源码、其他 MCP 客户端",
 "inst.dp1": "装上这个包,然后让任意 MCP 客户端指向该可执行文件:",
 "inst.dp2": "接着在客户端配置里写 <code>{\"mcpServers\": {\"xl\": {\"command\": \"kitchensink4xl\", \"env\": {\"KS4XL_MODE\": \"lite\"}}}}</code>,其中 mode 可为 \"lite\"(默认)、\"full\",或逗号分隔的包清单。从克隆目录运行也一样,把命令指向克隆里虚拟环境的 <code>xl-mcp</code> 即可。COM 包是可选附加项(<code>pip install kitchensink4xl[com]</code>),在非 Windows 上不做任何事。在 Windows 上,COM 依赖往往会随基础安装一起被带进来;不管怎样,用 <code>[com]</code> 安装都是稳妥的做法,重复装一次也无妨。完整设置见 <a href=\"https://github.com/KitchenSink4AI/KitchenSink4XL#install\">README</a>。",
-"inst.note": "这台服务器的大部分完全不需要装 Excel,在任何电脑上都能跑。只有请 Excel 亲自干活的那部分需要装有 Excel 的 Windows,而且它会另开一个自己的隐藏副本,你屏幕上开着的那个工作簿不会被碰。",
 "inst.tipt": "一个能让权限弹窗少掉大半的窍门",
 "inst.tipp": "在 Claude Desktop 里打开这个服务器的 <code>Tool permissions</code>,把 <code>Read-only tools</code> 那一组设成 <code>Always Allow</code>。这些工具什么都改不了,所以一次性批准是安全的,Claude 也就不会每读一次就问你一遍。会动手的那些工具保持在 <code>Ask</code>,这样任何会改变东西的操作,仍然会先来问过你。",
 "inst.tipb": "先做这一步",
@@ -2063,36 +2045,29 @@ de: {
 "eff.s3": "Aufruf bis zur ganzen Spüle",
 "eff.note": "Der Lite-Kern führt keine abgespeckten Ersatzteile, der bequeme Weg endet also mit Absicht in einer Sackgasse: eine Absage für Arbeit außerhalb des Umfangs nennt genau das Paket und genau den Aufruf, der sie freischaltet. Wer alles von Anfang an geladen haben will, kann es festnageln: <b>KS4XL_MODE=full</b> in der Serverumgebung oder eine kommagetrennte Paketliste. Administratoren sperren die Auswahl mit KS4XL_PACK_POLICY=locked.",
 "h2.install": "Montage und Anschluss",
-"inst.lead": "Nehmen Sie die Zeile, die auf Sie zutrifft. Die meisten sind die erste.",
 "inst.cold": "Der erste Start über uvx lädt und baut die Umgebung und kann 20 bis 30 Sekunden dauern, bis der Server antwortet; jeder weitere Start braucht etwa zwei. Meldet ein Client bei der ersten Installation einen Timeout, starten Sie den Server einmal im Terminal und versuchen Sie es erneut.",
 "inst.b1": "Am einfachsten",
+"setup.platform": "Dateibearbeitung unter Windows, macOS und Linux. Die Steuerung von Excel und Neuberechnung durch Excel benötigen Windows und Microsoft Excel.",
+"setup.otherApps": "ChatGPT Desktop / andere Apps",
+"platform.hero": "Windows · macOS · Linux",
 "setup.title": "Zum ersten Mal hier? Hier geht es los.",
 "setup.intro": "Diese Werkzeuge benötigen das kleine Startprogramm uv. Einmal einrichten reicht für alle vier Produkte. Schon installiert? Wählen Sie unten Ihre App.",
-"setup.windows": "Öffnen Sie unter Windows das Startmenü, suchen Sie PowerShell und öffnen Sie Windows PowerShell. Fügen Sie diese Zeile dort ein und drücken Sie die Eingabetaste:",
+"setup.windows": "Öffnen Sie unter Windows das Startmenü, suchen Sie PowerShell und öffnen Sie Windows PowerShell. Fügen Sie diese Zeile dort ein und drücken Sie Enter:",
 "setup.restart": "Schließen und öffnen Sie nach der Installation Ihre KI-App und alle Befehlsfenster erneut.",
 "setup.help": "Mac oder weitere Hilfe? Nutzen Sie die <a href=\"https://docs.astral.sh/uv/getting-started/installation/\">uv-Installationsanleitung</a>. Auf einem Arbeitsrechner muss eventuell Ihre IT die Installation übernehmen.",
 "setup.cliTitle": "Claude Code oder Codex? Diesen Befehl einfügen.",
-"setup.cli": "Nach Installation der App und der Ersteinrichtung öffnen Sie PowerShell unter Windows oder Terminal auf dem Mac. Fügen Sie den Befehl für Ihre App ein und drücken Sie die Eingabetaste. Starten Sie danach Ihre KI-Sitzung neu.",
+"setup.cli": "Nach Installation der App und der Ersteinrichtung öffnen Sie PowerShell unter Windows oder Terminal auf dem Mac. Fügen Sie den Befehl für Ihre App ein und drücken Sie Enter. Starten Sie danach Ihre KI-Sitzung neu.",
 "setup.desktopTitle": "Eine KI-App auf dem Desktop?",
 "setup.desktop": "Claude Desktop: Laden Sie unter Assets die Datei mit der Endung <b>.mcpb</b> herunter. Wählen Sie diese in Claude Desktop unter <b>Settings → Extensions → Advanced settings → Install Extension</b> aus.",
 "setup.download": "Für Claude Desktop herunterladen →",
-"setup.local": "ChatGPT Desktop, Codex oder andere Apps mit lokalen MCP-Einstellungen: Fügen Sie einen lokalen Server mit Befehl und Argument unten hinzu, speichern Sie und starten Sie die App neu. Menüs und Verfügbarkeit variieren.",
+"setup.local": "Für ChatGPT Desktop, Codex oder eine andere Desktop-App mit der Einstellung <b>MCP servers</b>:",
+"setup.fields": "<li>Öffnen Sie <b>Settings → MCP servers → Add server</b>.</li><li>Wählen Sie <b>Local</b> oder <b>STDIO</b>. Das Werkzeug läuft damit auf Ihrem Computer.</li><li>Vergeben Sie einen Namen, etwa <b>KitchenSink4XL</b>. Geben Sie im Feld <b>Command</b> <code>uvx</code> und im Feld <b>Arguments</b> <code>kitchensink4xl</code> ein.</li><li>Speichern Sie und starten Sie die App neu. Fehlen diese Optionen, lesen Sie die MCP-Anleitung Ihrer App.</li>",
 "compat.lead": "Für Claude Desktop, Claude Code, Codex und andere KI-Apps mit Unterstützung für lokale MCP-Server, einschließlich Open-Source-Clients.",
 "compat.chatgpt": "ChatGPT: Verwenden Sie eine Desktop-App mit lokaler MCP-Unterstützung. ChatGPT im Web benötigt eine separate Remote-Verbindung; diese Downloads richten sie nicht ein.",
-"compat.codex": "Codex einrichten",
-"compat.pre": "Zuerst uv installieren, dann ausführen:",
-"compat.other": "Andere Clients: uvx als Befehl und den Paketnamen als Argument verwenden. Folgen Sie der MCP-Anleitung Ihrer App.",
-"inst.s1": "Sie nutzen Claude Desktop? Ein Doppelklick.",
-"inst.p1": "Laden Sie das Installationsbündel aus der neuesten Ausgabe herunter und doppelklicken Sie es, oder ziehen Sie es in das Fenster von Claude Desktop. Desktop nimmt es als Erweiterung auf, und die Spüle ist angeschlossen. Nichts zu tippen, nichts zu konfigurieren.",
-"inst.g1": ".mcpb-Bündel herunterladen →",
-"inst.p1b": "Einmalige Voraussetzung: <a href=\"https://docs.astral.sh/uv/\">uv</a> in Ihrem PATH, damit startet das Bündel den Server.",
 "inst.b2": "Ein Befehl",
-"inst.s2": "Sie nutzen Claude Code? Das hier einfügen.",
-"inst.p2": "Eine Zeile im Terminal und Sie sind fertig. Der Server wird für Sie geholt und gestartet, vorher ist nichts zu installieren.",
 "inst.dev": "Für Entwickler: pip, uvx, Quelltext, andere MCP-Clients",
 "inst.dp1": "Paket installieren und einen beliebigen MCP-Client auf die ausführbare Datei zeigen lassen:",
 "inst.dp2": "Dann in der Konfiguration eines beliebigen Clients: <code>{\"mcpServers\": {\"xl\": {\"command\": \"kitchensink4xl\", \"env\": {\"KS4XL_MODE\": \"lite\"}}}}</code>, wobei der Modus \"lite\" (die Vorgabe), \"full\" oder eine kommagetrennte Paketliste ist. Aus einem Klon heraus läuft es genauso; zeigen Sie mit dem Befehl auf die Datei <code>xl-mcp</code> in der virtuellen Umgebung des Klons. Das COM-Paket ist ein optionaler Zusatz, <code>pip install kitchensink4xl[com]</code>, und tut außerhalb von Windows nichts. Unter Windows kommt die COM-Abhängigkeit oft schon transitiv mit der Basisinstallation; die Installation mit <code>[com]</code> ist ohnehin der sichere Weg und schadet nicht, wenn man sie wiederholt. Die vollständige Einrichtung steht in der <a href=\"https://github.com/KitchenSink4AI/KitchenSink4XL#install\">README</a>.",
-"inst.note": "Das meiste an diesem Server braucht überhaupt kein installiertes Excel und läuft auf jedem Rechner. Nur die Teile, die Excel selbst arbeiten lassen, wollen Windows mit Excel darauf, und sie öffnen dafür eine eigene, verborgene Ausgabe, sodass die Arbeitsmappe auf Ihrem Bildschirm unangetastet bleibt.",
 "inst.tipt": "Ein Tipp, der die meisten Berechtigungsabfragen beseitigt",
 "inst.tipp": "Öffnen Sie in Claude Desktop die <code>Tool permissions</code> für diesen Server und stellen Sie die Gruppe <code>Read-only tools</code> auf <code>Always Allow</code>. Diese Werkzeuge können nichts verändern, das einmalige Zulassen ist also sicher, und Claude fragt nicht mehr bei jedem Lesevorgang nach. Lassen Sie die handelnden Werkzeuge auf <code>Ask</code>, damit alles, was etwas verändert, weiterhin zuerst bei Ihnen nachfragt.",
 "inst.tipb": "Zuerst dies",
@@ -2252,9 +2227,11 @@ fr: {
 "eff.s3": "Appel jusqu'à l'évier complet",
 "eff.note": "Le noyau allégé ne porte aucun remplaçant au rabais, la voie de la facilité est donc une impasse assumée : un refus pour un travail hors périmètre nomme le pack exact et l'appel exact qui le débloque. Ceux qui veulent tout chargé dès le départ peuvent le fixer : <b>KS4XL_MODE=full</b> dans l'environnement du serveur, ou une liste de packs séparés par des virgules. Les administrateurs verrouillent la sélection avec KS4XL_PACK_POLICY=locked.",
 "h2.install": "Montage et raccordement",
-"inst.lead": "Choisissez la ligne qui vous correspond. La plupart des gens sont la première.",
 "inst.cold": "Le premier lancement via uvx télécharge et construit l'environnement et peut prendre 20 à 30 secondes avant que le serveur réponde ; les lancements suivants prennent environ deux secondes. Si un client signale un délai dépassé à la première installation, lancez-le une fois depuis un terminal, puis réessayez.",
 "inst.b1": "Le plus simple",
+"setup.platform": "Édition de fichiers sous Windows, macOS et Linux. Le pilotage d'Excel et le recalcul par Excel nécessitent Windows et Microsoft Excel.",
+"setup.otherApps": "ChatGPT Desktop / autres applications",
+"platform.hero": "Windows · macOS · Linux",
 "setup.title": "Première installation ? Commencez ici.",
 "setup.intro": "Ces outils ont besoin d'un petit lanceur appelé uv. Une seule installation suffit pour les quatre produits. Déjà installé ? Choisissez votre application ci-dessous.",
 "setup.windows": "Sous Windows, ouvrez le menu Démarrer, cherchez PowerShell et ouvrez Windows PowerShell. Collez cette ligne dans cette fenêtre, puis appuyez sur Entrée :",
@@ -2265,23 +2242,14 @@ fr: {
 "setup.desktopTitle": "Une application IA de bureau ?",
 "setup.desktop": "Claude Desktop : téléchargez le fichier <b>.mcpb</b> dans Assets. Dans Claude Desktop, ouvrez <b>Settings → Extensions → Advanced settings → Install Extension</b> et sélectionnez ce fichier.",
 "setup.download": "Télécharger pour Claude Desktop →",
-"setup.local": "ChatGPT Desktop, Codex ou autre application avec des réglages MCP locaux : ajoutez un serveur local avec la commande et l'argument ci-dessous, enregistrez et redémarrez l'application. Les menus et la disponibilité varient.",
+"setup.local": "Pour ChatGPT Desktop, Codex ou une autre application de bureau avec un réglage <b>MCP servers</b> :",
+"setup.fields": "<li>Ouvrez <b>Settings → MCP servers → Add server</b>.</li><li>Choisissez <b>Local</b> ou <b>STDIO</b>. Cela signifie que l'outil fonctionne sur votre ordinateur.</li><li>Donnez-lui un nom, par exemple <b>KitchenSink4XL</b>. Dans le champ <b>Command</b>, saisissez <code>uvx</code>. Dans <b>Arguments</b>, saisissez <code>kitchensink4xl</code>.</li><li>Enregistrez, puis redémarrez l'application. Si ces options manquent, consultez son guide de configuration MCP.</li>",
 "compat.lead": "Compatible avec Claude Desktop, Claude Code, Codex et les autres applications IA prenant en charge les serveurs MCP locaux, y compris les clients open source.",
 "compat.chatgpt": "ChatGPT : utilisez une application de bureau compatible avec les MCP locaux. La version web nécessite une connexion distante distincte, que ces téléchargements ne configurent pas.",
-"compat.codex": "Configurer Codex",
-"compat.pre": "Installez uv, puis exécutez :",
-"compat.other": "Autres clients : utilisez uvx comme commande et le nom du paquet comme argument. Suivez les instructions MCP de votre application.",
-"inst.s1": "Vous utilisez Claude Desktop ? Un double-clic.",
-"inst.p1": "Téléchargez le paquet d'installation depuis la dernière version et double-cliquez dessus, ou faites-le glisser dans la fenêtre de Claude Desktop. Desktop l'ajoute comme extension et l'évier est raccordé. Rien à taper, rien à configurer.",
-"inst.g1": "Télécharger le paquet .mcpb →",
-"inst.p1b": "Une seule condition, une fois pour toutes : <a href=\"https://docs.astral.sh/uv/\">uv</a> dans votre PATH, c'est ce que le paquet utilise pour lancer le serveur.",
 "inst.b2": "Une commande",
-"inst.s2": "Vous utilisez Claude Code ? Collez ceci.",
-"inst.p2": "Une ligne dans un terminal et c'est fait. Le serveur est récupéré et lancé pour vous, il n'y a rien à installer avant.",
 "inst.dev": "Pour les développeurs : pip, uvx, source, autres clients MCP",
 "inst.dp1": "Installez le paquet et pointez n'importe quel client MCP vers l'exécutable :",
 "inst.dp2": "Puis dans la configuration de n'importe quel client : <code>{\"mcpServers\": {\"xl\": {\"command\": \"kitchensink4xl\", \"env\": {\"KS4XL_MODE\": \"lite\"}}}}</code>, où le mode vaut \"lite\" (par défaut), \"full\", ou une liste de packs séparés par des virgules. Depuis un clone, cela fonctionne pareil ; pointez la commande vers l'exécutable <code>xl-mcp</code> dans l'environnement virtuel du clone. Le pack COM est une option, <code>pip install kitchensink4xl[com]</code>, et il ne fait rien hors de Windows. Sous Windows, la dépendance COM arrive souvent de façon transitive avec l'installation de base ; installer avec <code>[com]</code> reste la voie sûre dans tous les cas, et le répéter ne coûte rien. Installation complète dans le <a href=\"https://github.com/KitchenSink4AI/KitchenSink4XL#install\">README</a>.",
-"inst.note": "L'essentiel de ce serveur n'a besoin d'aucun Excel installé et tourne sur n'importe quel ordinateur. Seules les parties qui font travailler Excel réclament Windows avec Excel dessus, et elles ouvrent leur propre exemplaire masqué, si bien que le classeur affiché à votre écran n'est jamais touché.",
 "inst.tipt": "Une astuce qui supprime la plupart des fenêtres d'autorisation",
 "inst.tipp": "Dans Claude Desktop, ouvrez les <code>Tool permissions</code> de ce serveur et réglez le groupe <code>Read-only tools</code> sur <code>Always Allow</code>. Ces outils ne peuvent rien modifier, les autoriser une fois est donc sans risque, et Claude cesse de demander à chaque lecture. Laissez sur <code>Ask</code> les outils qui agissent, pour que tout ce qui modifie quelque chose vous demande encore la permission d'abord.",
 "inst.tipb": "À faire en premier",
@@ -2441,9 +2409,11 @@ es: {
 "eff.s3": "Llamada hasta el fregadero entero",
 "eff.note": "El núcleo ligero no lleva sustitutos de segunda, así que el camino cómodo es un callejón sin salida a propósito: una negativa por trabajo fuera de alcance nombra el paquete exacto y la llamada exacta que lo desbloquean. Quien quiera todo cargado desde el principio puede fijarlo: <b>KS4XL_MODE=full</b> en el entorno del servidor, o una lista de paquetes separados por comas. Los administradores bloquean la selección con KS4XL_PACK_POLICY=locked.",
 "h2.install": "Montaje y conexión",
-"inst.lead": "Elija la línea que le describe. La mayoría de la gente es la primera.",
 "inst.cold": "El primer arranque a través de uvx descarga y construye el entorno y puede tardar de 20 a 30 segundos antes de que el servidor responda; los arranques siguientes tardan unos dos. Si un cliente informa de un tiempo de espera agotado en la primera instalación, arránquelo una vez desde una terminal y vuelva a intentarlo.",
 "inst.b1": "Lo más fácil",
+"setup.platform": "Edición de archivos en Windows, macOS y Linux. El control de Excel y el recálculo mediante Excel requieren Windows y Microsoft Excel.",
+"setup.otherApps": "ChatGPT Desktop / otras aplicaciones",
+"platform.hero": "Windows · macOS · Linux",
 "setup.title": "¿Primera vez? Empiece aquí.",
 "setup.intro": "Estas herramientas necesitan un pequeño programa de inicio llamado uv. Se configura una sola vez para los cuatro productos. ¿Ya lo tiene? Elija su aplicación abajo.",
 "setup.windows": "En Windows, abra el menú Inicio, busque PowerShell y abra Windows PowerShell. Pegue esta línea en esa ventana y pulse Intro:",
@@ -2454,23 +2424,14 @@ es: {
 "setup.desktopTitle": "¿Usa una aplicación de IA de escritorio?",
 "setup.desktop": "Claude Desktop: descargue el archivo <b>.mcpb</b> en Assets. En Claude Desktop, abra <b>Settings → Extensions → Advanced settings → Install Extension</b> y seleccione ese archivo.",
 "setup.download": "Descargar para Claude Desktop →",
-"setup.local": "ChatGPT Desktop, Codex u otra aplicación con ajustes MCP locales: añada un servidor local con el comando y argumento siguientes, guarde y reinicie la aplicación. Los menús y la disponibilidad varían.",
+"setup.local": "Para ChatGPT Desktop, Codex u otra aplicación de escritorio con un ajuste <b>MCP servers</b>:",
+"setup.fields": "<li>Abra <b>Settings → MCP servers → Add server</b>.</li><li>Elija <b>Local</b> o <b>STDIO</b>. Esto significa que la herramienta se ejecuta en su equipo.</li><li>Asígnele un nombre, por ejemplo <b>KitchenSink4XL</b>. En el campo <b>Command</b>, escriba <code>uvx</code>. En <b>Arguments</b>, escriba <code>kitchensink4xl</code>.</li><li>Guarde y reinicie la aplicación. Si no encuentra estas opciones, consulte su guía de configuración MCP.</li>",
 "compat.lead": "Compatible con Claude Desktop, Claude Code, Codex y otras aplicaciones de IA que admitan servidores MCP locales, incluidos clientes de código abierto.",
 "compat.chatgpt": "ChatGPT: use una aplicación de escritorio compatible con MCP local. La versión web necesita una conexión remota aparte; estas descargas no la configuran.",
-"compat.codex": "Configurar Codex",
-"compat.pre": "Instale uv y ejecute:",
-"compat.other": "Otros clientes: use uvx como comando y el nombre del paquete como argumento. Siga las instrucciones MCP de su aplicación.",
-"inst.s1": "¿Usa Claude Desktop? Un doble clic.",
-"inst.p1": "Descargue el paquete de instalación de la última versión y haga doble clic, o arrástrelo a la ventana de Claude Desktop. Desktop lo añade como extensión y el fregadero queda conectado. Nada que escribir, nada que configurar.",
-"inst.g1": "Descargar el paquete .mcpb →",
-"inst.p1b": "Requisito único: tener <a href=\"https://docs.astral.sh/uv/\">uv</a> en su PATH, que es lo que el paquete usa para arrancar el servidor.",
 "inst.b2": "Un comando",
-"inst.s2": "¿Usa Claude Code? Pegue esto.",
-"inst.p2": "Una línea en el terminal y listo. Se encarga de traer y ejecutar el servidor, así que no hay nada que instalar antes.",
 "inst.dev": "Para desarrolladores: pip, uvx, código fuente, otros clientes MCP",
 "inst.dp1": "Instale el paquete y apunte cualquier cliente MCP al ejecutable:",
 "inst.dp2": "Después, en la configuración de cualquier cliente: <code>{\"mcpServers\": {\"xl\": {\"command\": \"kitchensink4xl\", \"env\": {\"KS4XL_MODE\": \"lite\"}}}}</code>, donde el modo es \"lite\" (el valor por omisión), \"full\", o una lista de paquetes separados por comas. Desde un clon funciona igual; apunte el comando al ejecutable <code>xl-mcp</code> del entorno virtual del clon. El paquete COM es un añadido opcional, <code>pip install kitchensink4xl[com]</code>, y fuera de Windows no hace nada. En Windows la dependencia COM suele llegar de forma transitiva con la instalación base; instalar con <code>[com]</code> es la vía garantizada en cualquier caso, y repetirlo no hace daño. La instalación completa está en el <a href=\"https://github.com/KitchenSink4AI/KitchenSink4XL#install\">README</a>.",
-"inst.note": "La mayor parte de este servidor no necesita Excel instalado y funciona en cualquier ordenador. Solo las partes que le piden trabajo a Excel quieren Windows con Excel encima, y abren su propia copia oculta, así que el libro que tiene en pantalla no se toca nunca.",
 "inst.tipt": "Un consejo que elimina casi todas las ventanas de permisos",
 "inst.tipp": "En Claude Desktop, abra los <code>Tool permissions</code> de este servidor y ponga el grupo <code>Read-only tools</code> en <code>Always Allow</code>. Esas herramientas no pueden cambiar nada, así que autorizarlas una vez es seguro, y Claude deja de preguntar en cada lectura. Deje en <code>Ask</code> las herramientas que actúan, para que todo lo que cambie algo siga pidiéndole permiso antes.",
 "inst.tipb": "Haga esto primero",
