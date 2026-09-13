@@ -649,6 +649,9 @@ footer .row>span{min-width:0;overflow-wrap:anywhere}
 }
 
 .footer-links{text-align:center;padding:10px 20px;font-size:12px}.footer-links a{white-space:nowrap}.release-date{font-size:12px;color:var(--ink-soft);white-space:nowrap;margin-left:auto}
+
+/* Local MCP client compatibility and optional setup commands. */
+.mcp-compat{margin:0 0 24px;min-width:0;max-width:100%;line-height:1.6}.mcp-compat p{margin:10px 0;overflow-wrap:anywhere}.mcp-compat summary{cursor:pointer;font-weight:700}.mcp-compat pre{max-width:100%;overflow-x:auto;padding:12px;border:1px solid currentColor;font-size:13px;line-height:1.65}.mcp-compat code{font-family:monospace}
 </style>
 </head>
 <body>
@@ -917,6 +920,16 @@ footer .row>span{min-width:0;overflow-wrap:anywhere}
 <section id="install">
   <div class="wrap">
     <div class="sec-head"><span class="no" data-i18n="no5">DEPT. 05</span><h2 data-i18n="h2.install">Wiring it in</h2><span class="sparkrule" aria-hidden="true"><svg viewBox="0 0 200 24" preserveAspectRatio="none"><polyline class="trace" points="0,16 18,16 30,9 42,16 60,16 72,20 84,12 96,12 108,5 120,16 138,16 150,11 162,16 182,16 200,12"/></svg><i class="node"></i></span></div>
+    <div class="mcp-compat">
+<p data-i18n="compat.lead">Works with Claude Desktop, Claude Code, Codex, and other AI apps that support local MCP servers, including open-source clients.</p>
+<p data-i18n="compat.chatgpt">ChatGPT: use a desktop app with local MCP support. ChatGPT on the web needs a separate remote connection; these downloads do not set that up.</p>
+<details><summary data-i18n="compat.codex">Codex setup</summary>
+<p data-i18n="compat.pre">Install uv first, then run:</p>
+<pre><code>codex mcp add xl -- uvx kitchensink4xl</code></pre>
+<p data-i18n="compat.other">Other clients: use uvx as the command and the package name as its argument. Follow your app's MCP setup instructions.</p>
+</details>
+</div>
+
     <p class="for-lead" data-i18n="inst.lead">Pick the line that describes you. Most people are the first one.</p>
     <p class="for-lead" style="font-size:15px;color:var(--ink-soft)" data-i18n="inst.cold">First launch through uvx downloads and builds the environment and can take 20 to 30 seconds before the server answers; every launch after that starts in about two. If a client reports a timeout on first install, launch once from a terminal and try again.</p>
     <div class="install-grid">
@@ -1288,6 +1301,11 @@ en: {
 "inst.lead": "Pick the line that describes you. Most people are the first one.",
 "inst.cold": "First launch through uvx downloads and builds the environment and can take 20 to 30 seconds before the server answers; every launch after that starts in about two. If a client reports a timeout on first install, launch once from a terminal and try again.",
 "inst.b1": "Easiest",
+"compat.lead": "Works with Claude Desktop, Claude Code, Codex, and other AI apps that support local MCP servers, including open-source clients.",
+"compat.chatgpt": "ChatGPT: use a desktop app with local MCP support. ChatGPT on the web needs a separate remote connection; these downloads do not set that up.",
+"compat.codex": "Codex setup",
+"compat.pre": "Install uv first, then run:",
+"compat.other": "Other clients: use uvx as the command and the package name as its argument. Follow your app's MCP setup instructions.",
 "inst.s1": "Using Claude Desktop? One double-click.",
 "inst.p1": "Download the installer bundle from the latest release and double-click it, or drag it into the Claude Desktop window. Desktop adds it as an extension and the sink is connected. Nothing to type, nothing to configure.",
 "inst.g1": "Download the .mcpb bundle →",
@@ -1461,6 +1479,11 @@ ko: {
 "inst.lead": "본인에게 해당하는 줄을 고르세요. 대부분은 첫 번째입니다.",
 "inst.cold": "uvx로 처음 실행할 때는 환경을 내려받아 구성하기 때문에 서버가 응답하기까지 20~30초가 걸릴 수 있습니다. 그다음부터는 2초 정도면 시작합니다. 설치 직후 클라이언트가 시간 초과를 알리면, 터미널에서 한 번 실행한 다음 다시 시도해 보세요.",
 "inst.b1": "가장 쉬움",
+"compat.lead": "Claude Desktop, Claude Code, Codex 및 로컬 MCP 서버를 지원하는 다른 AI 앱과 함께 사용할 수 있습니다. 오픈소스 클라이언트도 포함됩니다.",
+"compat.chatgpt": "ChatGPT: 로컬 MCP를 지원하는 데스크톱 앱을 사용하세요. 웹 ChatGPT에는 별도의 원격 연결이 필요하며, 이 다운로드에는 해당 설정이 포함되지 않습니다.",
+"compat.codex": "Codex 설정",
+"compat.pre": "먼저 uv를 설치한 다음 실행하세요:",
+"compat.other": "다른 클라이언트에서는 명령을 uvx로, 인수를 패키지 이름으로 지정하세요. 앱의 MCP 설정 안내를 따르세요.",
 "inst.s1": "Claude Desktop을 쓰신다면, 더블클릭 한 번.",
 "inst.p1": "최신 릴리스에서 설치 번들을 내려받아 더블클릭하거나 Claude Desktop 창에 끌어다 놓으세요. Desktop이 확장으로 추가하면 싱크대가 연결됩니다. 입력할 것도, 설정할 것도 없습니다.",
 "inst.g1": ".mcpb 번들 내려받기 →",
@@ -1634,6 +1657,11 @@ ja: {
 "inst.lead": "自分に当てはまる行を選んでください。たいていの方は一つ目です。",
 "inst.cold": "uvx で最初に起動するときは環境のダウンロードと構築が走るため、サーバーが応答するまで 20 秒から 30 秒かかることがあります。二回目からは 2 秒ほどで立ち上がります。インストール直後にクライアントがタイムアウトを報告したら、ターミナルから一度起動してから、もう一度お試しください。",
 "inst.b1": "いちばん簡単",
+"compat.lead": "Claude Desktop、Claude Code、Codex、およびローカル MCP サーバーに対応する AI アプリで利用できます。オープンソースのクライアントも含みます。",
+"compat.chatgpt": "ChatGPT: ローカル MCP 対応のデスクトップアプリを使用してください。Web 版には別途リモート接続が必要です。このダウンロードでは設定されません。",
+"compat.codex": "Codex の設定",
+"compat.pre": "まず uv をインストールしてから実行:",
+"compat.other": "その他のクライアントでは、コマンドを uvx、引数をパッケージ名に設定してください。各アプリの MCP 設定手順に従ってください。",
 "inst.s1": "Claude Desktop なら、ダブルクリック一回。",
 "inst.p1": "最新リリースからインストーラーの束をダウンロードしてダブルクリックするか、Claude Desktop のウィンドウにドラッグしてください。Desktop が拡張として追加し、流しがつながります。入力するものも、設定するものもありません。",
 "inst.g1": ".mcpb バンドルをダウンロード →",
@@ -1807,6 +1835,11 @@ zh: {
 "inst.lead": "挑一条符合你的。多数人是第一条。",
 "inst.cold": "首次通过 uvx 启动时要下载并构建环境,服务器可能需要 20 到 30 秒才会响应;之后每次启动大约两秒。如果客户端在刚装好时报超时,先在终端里启动一次,然后再试。",
 "inst.b1": "最省事",
+"compat.lead": "支持 Claude Desktop、Claude Code、Codex 及其他支持本地 MCP 服务器的 AI 应用，包括开源客户端。",
+"compat.chatgpt": "ChatGPT：请使用支持本地 MCP 的桌面应用。网页版需要单独配置远程连接；这些下载不会完成该配置。",
+"compat.codex": "Codex 设置",
+"compat.pre": "先安装 uv，然后运行：",
+"compat.other": "其他客户端：将命令设为 uvx，参数设为包名，并按照应用的 MCP 设置说明操作。",
 "inst.s1": "用 Claude Desktop? 双击一次就好。",
 "inst.p1": "从最新版本下载安装包并双击,或者把它拖进 Claude Desktop 窗口。Desktop 会把它作为扩展装上,水槽就接通了。不用打字,不用配置。",
 "inst.g1": "下载 .mcpb 安装包 →",
@@ -1980,6 +2013,11 @@ de: {
 "inst.lead": "Nehmen Sie die Zeile, die auf Sie zutrifft. Die meisten sind die erste.",
 "inst.cold": "Der erste Start über uvx lädt und baut die Umgebung und kann 20 bis 30 Sekunden dauern, bis der Server antwortet; jeder weitere Start braucht etwa zwei. Meldet ein Client bei der ersten Installation einen Timeout, starten Sie den Server einmal im Terminal und versuchen Sie es erneut.",
 "inst.b1": "Am einfachsten",
+"compat.lead": "Für Claude Desktop, Claude Code, Codex und andere KI-Apps mit Unterstützung für lokale MCP-Server, einschließlich Open-Source-Clients.",
+"compat.chatgpt": "ChatGPT: Verwenden Sie eine Desktop-App mit lokaler MCP-Unterstützung. ChatGPT im Web benötigt eine separate Remote-Verbindung; diese Downloads richten sie nicht ein.",
+"compat.codex": "Codex einrichten",
+"compat.pre": "Zuerst uv installieren, dann ausführen:",
+"compat.other": "Andere Clients: uvx als Befehl und den Paketnamen als Argument verwenden. Folgen Sie der MCP-Anleitung Ihrer App.",
 "inst.s1": "Sie nutzen Claude Desktop? Ein Doppelklick.",
 "inst.p1": "Laden Sie das Installationsbündel aus der neuesten Ausgabe herunter und doppelklicken Sie es, oder ziehen Sie es in das Fenster von Claude Desktop. Desktop nimmt es als Erweiterung auf, und die Spüle ist angeschlossen. Nichts zu tippen, nichts zu konfigurieren.",
 "inst.g1": ".mcpb-Bündel herunterladen →",
@@ -2153,6 +2191,11 @@ fr: {
 "inst.lead": "Choisissez la ligne qui vous correspond. La plupart des gens sont la première.",
 "inst.cold": "Le premier lancement via uvx télécharge et construit l'environnement et peut prendre 20 à 30 secondes avant que le serveur réponde ; les lancements suivants prennent environ deux secondes. Si un client signale un délai dépassé à la première installation, lancez-le une fois depuis un terminal, puis réessayez.",
 "inst.b1": "Le plus simple",
+"compat.lead": "Compatible avec Claude Desktop, Claude Code, Codex et les autres applications IA prenant en charge les serveurs MCP locaux, y compris les clients open source.",
+"compat.chatgpt": "ChatGPT : utilisez une application de bureau compatible avec les MCP locaux. La version web nécessite une connexion distante distincte, que ces téléchargements ne configurent pas.",
+"compat.codex": "Configurer Codex",
+"compat.pre": "Installez uv, puis exécutez :",
+"compat.other": "Autres clients : utilisez uvx comme commande et le nom du paquet comme argument. Suivez les instructions MCP de votre application.",
 "inst.s1": "Vous utilisez Claude Desktop ? Un double-clic.",
 "inst.p1": "Téléchargez le paquet d'installation depuis la dernière version et double-cliquez dessus, ou faites-le glisser dans la fenêtre de Claude Desktop. Desktop l'ajoute comme extension et l'évier est raccordé. Rien à taper, rien à configurer.",
 "inst.g1": "Télécharger le paquet .mcpb →",
@@ -2326,6 +2369,11 @@ es: {
 "inst.lead": "Elija la línea que le describe. La mayoría de la gente es la primera.",
 "inst.cold": "El primer arranque a través de uvx descarga y construye el entorno y puede tardar de 20 a 30 segundos antes de que el servidor responda; los arranques siguientes tardan unos dos. Si un cliente informa de un tiempo de espera agotado en la primera instalación, arránquelo una vez desde una terminal y vuelva a intentarlo.",
 "inst.b1": "Lo más fácil",
+"compat.lead": "Compatible con Claude Desktop, Claude Code, Codex y otras aplicaciones de IA que admitan servidores MCP locales, incluidos clientes de código abierto.",
+"compat.chatgpt": "ChatGPT: use una aplicación de escritorio compatible con MCP local. La versión web necesita una conexión remota aparte; estas descargas no la configuran.",
+"compat.codex": "Configurar Codex",
+"compat.pre": "Instale uv y ejecute:",
+"compat.other": "Otros clientes: use uvx como comando y el nombre del paquete como argumento. Siga las instrucciones MCP de su aplicación.",
 "inst.s1": "¿Usa Claude Desktop? Un doble clic.",
 "inst.p1": "Descargue el paquete de instalación de la última versión y haga doble clic, o arrástrelo a la ventana de Claude Desktop. Desktop lo añade como extensión y el fregadero queda conectado. Nada que escribir, nada que configurar.",
 "inst.g1": "Descargar el paquete .mcpb →",
