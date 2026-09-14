@@ -245,6 +245,8 @@ downloads or installs anything.
 
 </details>
 
+For guided Windows setup, signed license receipts, and email support, see the KitchenSink4AI Business edition: https://kitchensink4.ai/products/business/
+
 ## Context cost (measured)
 
 Most MCP servers move into your AI's context like a hoarder: everything, up
