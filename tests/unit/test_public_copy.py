@@ -43,6 +43,7 @@ PUBLISHED_OPERATIONS = 129
 PUBLISHED_TOOLS_TOTAL = 69      # 67 workbook tools + enable_tools/disable_tools
 PUBLISHED_TOOLS_LITE = 40
 PUBLISHED_STRESS_CALLS = 882    # journaled adversarial calls; a floor, not a total
+BETA_LABEL = re.compile(r"\bbeta\b", re.IGNORECASE)
 
 
 def _public_files() -> list[Path]:
@@ -335,8 +336,22 @@ def test_version_is_consistent_across_manifests():
     )
 
 
+@pytest.mark.parametrize(
+    ("text", "has_beta_label"),
+    [
+        ("Beta", True),
+        ("beta-1", True),
+        ("Eingabetaste", False),
+    ],
+)
+def test_beta_label_detection(text: str, has_beta_label: bool):
+    assert bool(BETA_LABEL.search(text)) is has_beta_label
+
+
 def test_no_beta_language_in_public_copy():
     """Excel ships as a full 1.0 (author ruling). No beta labels anywhere."""
     for path in _public_files():
-        text = path.read_text(encoding="utf-8").lower()
-        assert "beta" not in text, f"{path.name} still carries a beta label"
+        text = path.read_text(encoding="utf-8")
+        assert BETA_LABEL.search(text) is None, (
+            f"{path.name} still carries a beta label"
+        )
