@@ -53,6 +53,7 @@ from . import envelope as _envelope
 from . import packs as _packs
 from .core import package as _package
 from .core import readonly as _readonly
+from .core import tool_annotations as _toolann
 from .core import schemas as _schemas
 from .core import sandbox as _sandbox
 from .core import update_check as _upd
@@ -207,9 +208,9 @@ def _tool(pack: str):
 
         tool = _FunctionTool.from_function(
             boundary,
-            annotations={
-                "readOnlyHint": _readonly.read_only_hint(fn.__name__)
-            },
+            annotations=_toolann.annotations(
+                fn.__name__, _readonly.read_only_hint(fn.__name__)
+            ),
             # No outputSchema. Every tool here returns `dict`, from which
             # fastmcp derives {"type": "object", "additionalProperties": true}
             # -- a schema that validates nothing, costs 828 tokens of surface
