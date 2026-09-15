@@ -346,13 +346,32 @@ def _build_chart(chart_type: str):
     return ch
 
 
+def _apply_axis_visibility(ch, show_axes: bool) -> None:
+    """Say out loud whether the value and category axes are drawn.
+
+    openpyxl leaves c:delete unset on a fresh axis, and an omitted c:delete
+    is read as a deleted axis, so every chart created here shipped with both
+    axes suppressed: a plot area with bars in it and no scale to read them
+    against. Writing the flag explicitly is the fix, and writing it in both
+    directions is what lets a caller still ask for a bare plot.
+
+    Pie and doughnut have no x_axis or y_axis attribute at all in openpyxl,
+    which is the dispatch: a chart type with no axis object gets nothing set
+    on it rather than an AttributeError.
+    """
+    for name in ("x_axis", "y_axis"):
+        axis = getattr(ch, name, None)
+        if axis is not None:
+            axis.delete = not show_axes
+
+
 def manage_chart(path: str, action: str, chart_type: str | None = None,
                  data: Any = None, categories: Any = None,
                  title: str | None = None, x_title: str | None = None,
                  y_title: str | None = None, anchor: str | None = None,
                  sheet: str | None = None, index: int | None = None,
-                 titles_from_data: bool = True, allow_loss: bool = False,
-                 backup: bool = True,
+                 titles_from_data: bool = True, show_axes: bool = True,
+                 allow_loss: bool = False, backup: bool = True,
                  verify_com: bool | None = None) -> dict:
     """Create / list / delete charts (openpyxl chart model). Backup + verify
     on write."""
@@ -420,6 +439,7 @@ def manage_chart(path: str, action: str, chart_type: str | None = None,
                     min_row=cgrid.min_row, max_col=cgrid.max_col,
                     max_row=cgrid.max_row)
                 ch.set_categories(cref)
+        _apply_axis_visibility(ch, show_axes)
         if title:
             ch.title = title
         if x_title:

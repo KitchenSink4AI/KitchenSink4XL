@@ -1216,8 +1216,9 @@ def manage_chart(path: str, action: str, chart_type: str | None = None,
                  title: str | None = None, x_title: str | None = None,
                  y_title: str | None = None, anchor: str | None = None,
                  sheet: str | None = None, index: int | None = None,
-                 titles_from_data: bool = True, allow_loss: bool = False,
-                 backup: bool = True, verify_com: bool | None = None) -> dict:
+                 titles_from_data: bool = True, show_axes: bool = True,
+                 allow_loss: bool = False, backup: bool = True,
+                 verify_com: bool | None = None) -> dict:
     """Create, list, and delete charts. action create takes chart_type (bar,
     bar_horizontal, line, pie, doughnut, area, scatter), data (a location
     object; its first row supplies series titles unless titles_from_data is
@@ -1225,6 +1226,10 @@ def manage_chart(path: str, action: str, chart_type: str | None = None,
     categories, title, x_title, y_title, and an anchor cell (default just
     right of the data). list reports each chart's sheet, index, type,
     title, and anchor; delete takes sheet plus index or title.
+
+    Axes are drawn by default. Pass show_axes false for a bare plot area
+    with no category or value axis; pie and doughnut have no axes either
+    way.
 
     Fidelity honesty: chart fidelity is model-mediated. openpyxl
     re-serializes every chart through its own model on save, so a complex
@@ -1238,8 +1243,8 @@ def manage_chart(path: str, action: str, chart_type: str | None = None,
         path, action, chart_type=chart_type, data=data,
         categories=categories, title=title, x_title=x_title,
         y_title=y_title, anchor=anchor, sheet=sheet, index=index,
-        titles_from_data=titles_from_data, allow_loss=allow_loss,
-        backup=backup, verify_com=verify_com)
+        titles_from_data=titles_from_data, show_axes=show_axes,
+        allow_loss=allow_loss, backup=backup, verify_com=verify_com)
 
 
 # --------------------------------------------------------------- protection
