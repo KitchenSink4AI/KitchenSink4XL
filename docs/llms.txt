@@ -178,7 +178,7 @@ no network call, no cache file).
 - GitHub: https://github.com/KitchenSink4AI/KitchenSink4XL
 - PyPI: https://pypi.org/project/kitchensink4xl/
 - Landing page: https://kitchensink4.ai/KitchenSink4XL/
-- Family: https://kitchensink4.ai/
+- Family: https://kitchensink4.ai/products/
 - Issues, including licensing: https://github.com/KitchenSink4AI/KitchenSink4XL/issues/new/choose
 
 ## 11. License
