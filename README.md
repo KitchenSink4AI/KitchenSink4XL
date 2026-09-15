@@ -317,6 +317,10 @@ tricks, and lookalike sibling directories are all caught. A blocked call
 refuses with a typed error naming the offending path and the allowed roots
 before any file is opened.
 
+## Privacy Policy
+
+[[OWNER: privacy policy section, links https://kitchensink4.ai/privacy/]]
+
 ## Testing
 
 1,294 tests in `tests/unit`, plus a separate local COM gate battery that drives a
