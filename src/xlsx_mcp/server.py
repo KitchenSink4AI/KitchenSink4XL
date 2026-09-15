@@ -1665,8 +1665,9 @@ def com_render_sheet(path: str, output: str, sheet: str | None = None,
     Excel displays it: formatting, conditional formats, charts in range,
     and sparklines included. Use it to visually verify edits without
     opening Excel by hand. output must be a .png path; existing files
-    refuse unless overwrite:true. Read-only on the workbook. Runs in a
-    private hidden Excel instance, serialized and timeout-bounded."""
+    refuse unless overwrite:true. Read-only on the workbook, in a private
+    hidden Excel instance, serialized and timeout-bounded. A picture that
+    comes back blank is a refusal naming com_export_pdf, never an ok."""
     return _comtier.com_render_sheet(
         path, output, sheet=sheet, range_a1=range_a1, overwrite=overwrite,
         timeout_seconds=timeout_seconds)

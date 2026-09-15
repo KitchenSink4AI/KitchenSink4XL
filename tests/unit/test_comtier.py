@@ -345,3 +345,121 @@ def test_recalculate_formulas_engine_reads_without_writing(tmp_path):
     assert result["engine"] == "formulas"
     assert Path(p).read_bytes() == before, \
         "the formulas engine must never modify the file"
+
+
+# ------------------------------------------------ blank render detection
+
+
+def _png(width: int, height: int, palette_entries: int | None,
+         *, colour_type: int = 3) -> bytes:
+    """A minimal, valid PNG with a palette of a chosen size.
+
+    Built from struct and zlib rather than Pillow because the detector runs
+    in the shipped server, where Pillow is not a dependency, and a test that
+    needs one would be testing a different environment.
+    """
+    import struct
+    import zlib
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return (struct.pack(">I", len(data)) + kind + data
+                + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF))
+
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, colour_type, 0, 0, 0)
+    out = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr)
+    if palette_entries is not None:
+        out += chunk(b"PLTE", bytes(palette_entries * 3))
+    per_row = width * (3 if colour_type == 2 else 1)
+    raw = b"".join(b"\x00" + bytes(per_row) for _ in range(height))
+    return out + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
+
+
+def _write_png(path: Path, *args, **kwargs) -> str:
+    path.write_bytes(_png(*args, **kwargs))
+    return str(path)
+
+
+def test_png_palette_size_reads_the_declared_entry_count(tmp_path):
+    """The PLTE chunk length is an exact upper bound on how many colours the
+    picture can hold, which is the whole cheap check."""
+    assert comtier._png_palette_size(
+        _write_png(tmp_path / "six.png", 274, 116, 6)) == 6
+    assert comtier._png_palette_size(
+        _write_png(tmp_path / "eighty.png", 138, 40, 80)) == 80
+
+
+def test_png_palette_size_has_no_bound_for_truecolour_or_rubbish(tmp_path):
+    """None means "no cheap bound", never "blank": a truecolour export is
+    rich by construction, and an unreadable file is not evidence of
+    anything."""
+    assert comtier._png_palette_size(
+        _write_png(tmp_path / "rgb.png", 40, 40, None, colour_type=2)) is None
+    junk = tmp_path / "junk.png"
+    junk.write_bytes(b"not a png at all")
+    assert comtier._png_palette_size(str(junk)) is None
+    assert comtier._png_palette_size(str(tmp_path / "absent.png")) is None
+
+
+def test_render_is_blank_splits_the_artefact_from_a_thin_real_picture(
+        tmp_path):
+    """The measured numbers: Excel's empty chart canvas comes back with six
+    palette entries at every canvas size, a range of EMPTY cells (gridlines
+    only) with thirty, and a single cell holding a number with eighty."""
+    assert comtier._render_is_blank(
+        _write_png(tmp_path / "artefact.png", 2177, 348, 6)) is True
+    assert comtier._render_is_blank(
+        _write_png(tmp_path / "edge.png", 100, 100, 8)) is True
+    assert comtier._render_is_blank(
+        _write_png(tmp_path / "just_over.png", 100, 100, 9)) is False
+    assert comtier._render_is_blank(
+        _write_png(tmp_path / "gridlines.png", 546, 306, 30)) is False
+    assert comtier._render_is_blank(
+        _write_png(tmp_path / "one_cell.png", 138, 40, 80)) is False
+    assert comtier._render_is_blank(
+        _write_png(tmp_path / "rgb.png", 40, 40, None,
+                   colour_type=2)) is False
+
+
+def test_blank_render_refusal_names_the_route_that_works():
+    msg = comtier._BLANK_RENDER_REFUSAL
+    assert "blank" in msg
+    assert "com_export_pdf" in msg, (
+        "a refusal that names no working route sends the caller back to "
+        "the same broken one")
+
+
+def test_render_refuses_and_removes_the_file_when_the_png_is_blank(
+        tmp_path, monkeypatch):
+    """The honesty gate. com_render_sheet used to hand back ok:true with a
+    populated rendered path over a white rectangle; it now refuses, and it
+    does not leave the artefact on disk for a caller to find later."""
+    p = _book(tmp_path / "b.xlsx")
+    out = tmp_path / "render.png"
+
+    def fake_run(label, path, body, timeout=None):
+        out.write_bytes(_png(2177, 348, 6))
+        return {"rendered": str(out), "range": "$A$1:$A$3", "sheet": "Data"}
+
+    monkeypatch.setattr(comtier, "_clipboard_available", lambda: True)
+    monkeypatch.setattr(comtier, "_run_readonly", fake_run)
+    with pytest.raises(ValidationFailed) as exc:
+        comtier.com_render_sheet(p, str(out))
+    assert "com_export_pdf" in str(exc.value)
+    assert not out.exists(), "the blank artefact was left on disk"
+
+
+def test_render_accepts_a_picture_with_real_content(tmp_path, monkeypatch):
+    """The gate is a gate, not a wall: a real export still comes back
+    ok."""
+    p = _book(tmp_path / "b.xlsx")
+    out = tmp_path / "render.png"
+
+    def fake_run(label, path, body, timeout=None):
+        out.write_bytes(_png(546, 154, 80))
+        return {"rendered": str(out), "range": "$A$1:$A$3", "sheet": "Data"}
+
+    monkeypatch.setattr(comtier, "_clipboard_available", lambda: True)
+    monkeypatch.setattr(comtier, "_run_readonly", fake_run)
+    result = comtier.com_render_sheet(p, str(out))
+    assert result["ok"] is True
+    assert out.exists()
