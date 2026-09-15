@@ -12,19 +12,71 @@
 
 [Landing page](https://kitchensink4.ai/KitchenSink4XL/) · [llms.txt](https://kitchensink4.ai/KitchenSink4XL/llms.txt) (machine-readable capability manifest for agents and LLM crawlers)
 
-An Excel (.xlsx) MCP server built against hallucination: every value your AI
-reads is labeled calculated, cached, or missing, so it never repeats a stale
-number as a fresh one. Cells and ranges, formulas, server-side query and
-aggregation, formatting, tables, sort and filter, CSV/JSON import and export,
-and verified writes that never corrupt a workbook. 129 workbook operations
-across 69 tools (67 workbook tools plus the two pack toggles). Works with
-Claude Code, Claude Desktop, Cursor, and any MCP client. Part of the
-KitchenSink4AI suite with [kitchensink4word](https://pypi.org/project/kitchensink4word/)
-(Word), [kitchensink4ppt](https://pypi.org/project/kitchensink4ppt/)
-(PowerPoint), and [kitchensink4web](https://pypi.org/project/kitchensink4web/)
-(browser).
+**Read and edit Excel workbooks with your AI assistant, and know which numbers are calculated, cached or missing.**
 
-New here? Start with the [Quickstart](docs/QUICKSTART.md).
+Read and edit real Excel workbooks from Claude Code, Codex CLI, Copilot CLI or any other MCP client that runs local tools. KitchenSink4XL connects your assistant to .xlsx files with tools for formulas, tables and data checks, and it tells you whether a value was calculated, cached or never computed before you put it in a report. Files are processed on your computer; the only thing that leaves it is what your AI app sends to its own provider. The Community edition is free under the AGPL. The Business edition adds a Windows installer, a signed update channel, a licence your company can approve and support.
+
+**Works on:** Windows, macOS and Linux for the file tools. Recalculation, pivots and the other Excel-powered features need Windows with Microsoft Excel installed.
+
+## Install
+
+Pick the route for your AI app. The commands go in PowerShell on Windows or a terminal on macOS and Linux, not into an AI chat. The package routes need Python 3.12 or newer.
+
+**Claude Desktop**
+
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then quit and reopen Claude Desktop. Download the `.mcpb` file from [KitchenSink4XL releases](https://github.com/KitchenSink4AI/KitchenSink4XL/releases/latest). In Claude Desktop open Settings, then Extensions, then Advanced settings, then Install extension, and choose the file. The bundle fetches the Python package the first time it starts, so the first launch needs a network connection. Restart your session and check that the tools show as connected.
+
+**Claude Code or Codex CLI**
+
+Install uv, then run the line for your app and restart your session:
+
+```sh
+claude mcp add xl -s user -- uvx kitchensink4xl
+```
+
+```sh
+codex mcp add xl -- uvx kitchensink4xl
+```
+
+**Any other local MCP client**
+
+Use `uvx` as the command and `kitchensink4xl` as its argument, or install the package and use `kitchensink4xl` as the server command:
+
+```sh
+pip install kitchensink4xl
+```
+
+Then follow your client's guide for adding a local MCP server. Installing the package on its own does not connect it to an AI app.
+
+**Business edition**
+
+Compare the editions on the [pricing page](https://kitchensink4.ai/pricing/). Already purchased? Your Windows installer and download link are in your [licence portal](https://get.kitchensink4.ai/my-license/).
+
+## What it can do
+
+69 tools with every pack enabled, including the pack controls. The default lite surface has 40.
+
+- See whether a value was calculated, cached or missing before you use it.
+- Read a range or summarize a large table without pulling every row.
+- Write formulas, values and number formats into an existing workbook.
+- Add or remove rows and columns while supported references update.
+- Sort, filter and format tables for a client or a colleague.
+- Import and export CSV and JSON.
+- Check a workbook for structural problems before sharing it.
+- Use installed Excel on Windows for recalculation, pivots and PDF export.
+
+What is available depends on the packs you enable and the applications installed. The full tool reference is below.
+
+## Business edition
+
+Need a licence your company can approve and a setup someone supports? The Business edition pairs these tools with a Windows installer, a signed update channel and support under the Business terms. Update checks tell you when a covered release is available; nothing installs on its own. Compare the options on the [pricing page](https://kitchensink4.ai/pricing/). The Community edition stays free under the AGPL, including business use that meets its terms.
+
+## Privacy Policy
+
+The tools run on your computer, and KitchenSink4AI receives no documents and no usage data from them. Your AI app may send prompts, file contents and tool results to its own provider under that app's settings and terms. Installing downloads packages, and the Community version check contacts PyPI unless you disable it; those requests carry connection details such as your network address and never your documents. Cloud folders and backups follow their own settings. The [Privacy Policy](https://kitchensink4.ai/privacy/) covers the product, purchases and support records.
+
+Not affiliated with, endorsed by, or sponsored by Microsoft Corporation.
+Microsoft and Excel are trademarks of the Microsoft group of companies.
 
 ## The number that looks right and isn't
 
@@ -52,55 +104,6 @@ This server moves everything that should move, and checks the result against
 what Excel itself would have done. When an edit cannot be done safely, it says
 no out loud instead of guessing quietly. A refusal costs you a minute. A quiet
 guess costs you the deal.
-
-## Two numbers that matter
-
-- **129 workbook operations, 67 tools.** Many tools here are action
-  multiplexers, so the tool count undersells the surface: `manage_worksheet`
-  alone performs seven distinct operations, `manage_table` nine, `validate`
-  runs nine correctness batteries. The operations figure comes from
-  `scripts/count_operations.py`, which reads the dispatch values each tool
-  actually validates, out of committed source, and never from hand-math. Its
-  docstring carries the counting definition and what is deliberately excluded.
-  A committed snapshot (`scripts/operations_snapshot.json`) plus a guard test
-  make a drifting figure a test failure rather than a marketing decision.
-- **Tiered loading: starts at about 15.5k tokens, scales to everything.** A
-  fresh session loads the 40-tool lite core and turns on capability packs only
-  when a task needs them, with one `enable_tools` call. Load every pack and
-  the full surface measures about 24,200 tokens. All figures come from
-  `scripts/measure_surface.py`; see [Context cost](#context-cost-measured).
-
-## The packs
-
-The stock is arranged in capability packs, the way a good shop groups what
-belongs together. A session opens on the lite core and switches on the pack a
-job needs with one call. Numbers below come straight from
-`scripts/measure_surface.py`, never hand-counted.
-
-| Pack | Tools | Approx tokens | What it carries |
-|---|---:|---:|---|
-| **lite** (startup) | 40 | ~15.5k | The everyday bench: an anchored grid view of the workbook, labeled reads of cells and ranges, server-side query and aggregation, formula write and audit, structural row and column edits that carry their references, sort and filter with Excel's own ranking, tables, formatting, import and export, backups, diagnostics, and the `enable_tools` switchboard |
-| design | 9 | ~4.3k | Named cell styles, a format painter, a style-bloat audit, conditional formatting, data validation, images, charts, the full table lifecycle (columns, totals, resize, banding), and named ranges including LAMBDA definitions and a cleanup pass |
-| io | 9 | ~3.0k | Page layout and print setup, headers and footers, advisory protection, legacy comments, multi-sheet export, and the read-side inspectors: external links, VBA, existing pivot tables, and data connections |
-| com | 11 | ~3.1k | Drives a private hidden Excel instance, never your open session: real recalculation, real pivot tables, goal seek, PDF export, sheet render to image, format conversion, real encryption, sparklines, true autofit, an opens-clean check, and an honest status report |
-| **Full surface** | **69** | **~25.8k** | Everything (67 workbook tools plus `enable_tools` / `disable_tools`) |
-
-## Quickstart: start lite, enable what you need
-
-A session begins with the lite core. When a task needs more, the agent turns
-on the pack by name:
-
-```
-enable_tools(["design"])        # styles, conditional formatting, charts, names
-enable_tools(["com"])           # real recalculation, real pivots, PDF export
-```
-
-The lite core carries no degraded stand-ins, so the lazy path is a dead end on
-purpose: a refusal for out-of-scope work names the exact pack and the exact
-call that unlocks it. Power users who want everything loaded from the start
-can pin it with `KS4XL_MODE=full` in the server environment, or a
-comma-separated pack list. Administrators can lock the selection with
-`KS4XL_PACK_POLICY=locked`.
 
 ## Against the rest of the aisle
 
@@ -135,121 +138,54 @@ rather than an MCP server. † Star counts read from the GitHub API on
 not what is on it. Corrections welcome:
 [open an issue](https://github.com/KitchenSink4AI/KitchenSink4XL/issues).
 
-## Requirements
+## The packs
 
-- Python 3.12+ (developed on 3.14)
-- Most of this server needs no Excel installed at all and runs on any
-  computer. The parts that ask Excel to do the work want Windows with Excel on
-  it, and they open their own private copy, so the workbook you have on screen
-  is never touched.
+The stock is arranged in capability packs, the way a good shop groups what
+belongs together. A session opens on the lite core and switches on the pack a
+job needs with one call. Numbers below come straight from
+`scripts/measure_surface.py`, never hand-counted.
 
-## Install
+| Pack | Tools | Approx tokens | What it carries |
+|---|---:|---:|---|
+| **lite** (startup) | 40 | ~15.5k | The everyday bench: an anchored grid view of the workbook, labeled reads of cells and ranges, server-side query and aggregation, formula write and audit, structural row and column edits that carry their references, sort and filter with Excel's own ranking, tables, formatting, import and export, backups, diagnostics, and the `enable_tools` switchboard |
+| design | 9 | ~4.3k | Named cell styles, a format painter, a style-bloat audit, conditional formatting, data validation, images, charts, the full table lifecycle (columns, totals, resize, banding), and named ranges including LAMBDA definitions and a cleanup pass |
+| io | 9 | ~3.0k | Page layout and print setup, headers and footers, advisory protection, legacy comments, multi-sheet export, and the read-side inspectors: external links, VBA, existing pivot tables, and data connections |
+| com | 11 | ~3.1k | Drives a private hidden Excel instance, never your open session: real recalculation, real pivot tables, goal seek, PDF export, sheet render to image, format conversion, real encryption, sparklines, true autofit, an opens-clean check, and an honest status report |
+| **Full surface** | **69** | **~25.8k** | Everything (67 workbook tools plus `enable_tools` / `disable_tools`) |
 
-Pick the line that describes you. Most people are the first one.
+## Quickstart: start lite, enable what you need
 
-First launch through uvx downloads and builds the environment and can take 20
-to 30 seconds before the server answers; every launch after that starts in
-about two. If a client reports a timeout on first install, launch once from a
-terminal and try again.
-
-### Using Claude Desktop? One double-click.
-
-Download `kitchensink4xl.mcpb` from the
-[latest release](https://github.com/KitchenSink4AI/KitchenSink4XL/releases/latest)
-and double-click it, or drag it into the Claude Desktop window. Desktop adds
-it as an extension and the sink is connected. Nothing to type, nothing to
-configure. One-time requirement: [uv](https://docs.astral.sh/uv/) on your
-PATH (`pip install uv`), which the bundle uses to start the server. If Desktop
-does not pick the file up on a double-click, use Settings > Extensions >
-Advanced settings > Install extension.
-
-The extension's settings page offers two switches. **Verify every save with
-Excel** turns on the deep check, where a real hidden Excel has to open the
-saved file cleanly or the backup is restored; it is off by default because it
-costs a round trip through Excel on every write. **Limit the server to one
-folder** confines every path the server touches, reads included, to a
-directory you pick.
-
-### Using Claude Code? Paste this.
+A session begins with the lite core. When a task needs more, the agent turns
+on the pack by name:
 
 ```
-claude mcp add xl -s user -- uvx kitchensink4xl
+enable_tools(["design"])        # styles, conditional formatting, charts, names
+enable_tools(["com"])           # real recalculation, real pivots, PDF export
 ```
 
-One line in a terminal and you are done. It fetches and runs the server for
-you, so there is nothing to install first.
+The lite core carries no degraded stand-ins, so the lazy path is a dead end on
+purpose: a refusal for out-of-scope work names the exact pack and the exact
+call that unlocks it. Power users who want everything loaded from the start
+can pin it with `KS4XL_MODE=full` in the server environment, or a
+comma-separated pack list. Administrators can lock the selection with
+`KS4XL_PACK_POLICY=locked`.
 
-<details>
-<summary><b>For developers: pip, uvx, source, other MCP clients</b></summary>
+## Two numbers that matter
 
-Install the package and point any MCP client at the executable:
-
-```
-pip install kitchensink4xl
-```
-
-```json
-{"mcpServers": {"xl": {"command": "kitchensink4xl", "env": {"KS4XL_MODE": "lite"}}}}
-```
-
-The mode is `"lite"` (the default), `"full"`, or a comma-separated pack list.
-The `xl-mcp` executable is an equivalent entry point. The installed package is
-named `xlsx_mcp`, so a client that wants an interpreter and a module instead
-of a console script can run `python -m xlsx_mcp`.
-`python -m xlsx_mcp.server` starts the same server and is what releases
-before 1.1 support. Running from a clone
-works the same way; point the command at the `xl-mcp` executable in the
-clone's virtual environment:
-
-Windows:
-
-```
-git clone https://github.com/KitchenSink4AI/KitchenSink4XL
-cd KitchenSink4XL
-python -m venv .venv
-.venv\Scripts\pip install -e ".[com]"
-claude mcp add xl -s user -- <absolute-path>\.venv\Scripts\xl-mcp.exe
-```
-
-macOS and Linux:
-
-```
-git clone https://github.com/KitchenSink4AI/KitchenSink4XL
-cd KitchenSink4XL
-python3 -m venv .venv
-.venv/bin/pip install -e ".[com]"
-claude mcp add xl -s user -- <absolute-path>/.venv/bin/xl-mcp
-```
-
-The COM pack is an optional extra, `pip install kitchensink4xl[com]`, and it
-is a no-op off Windows. On Windows the COM dependency often arrives
-transitively with the base install; installing with `[com]` is the guaranteed
-route either way, and harmless to repeat. With no install at all:
-`uvx kitchensink4xl`.
-
-Environment variables the server reads:
-
-| Variable | What it does |
-|---|---|
-| `KS4XL_MODE` | Startup surface: `lite` (default), `full`, or a comma-separated pack list |
-| `KS4XL_PACK_POLICY` | `auto` (default) or `locked`, which fixes the surface at startup |
-| `KS4XL_ALLOWED_ROOTS` | Path sandbox: an `os.pathsep`-separated list of directories |
-| `KS4XL_VERIFY_COM` | `1` makes the deep Excel verification the default for every save |
-| `KS4XL_VALIDATE_COM` | `1` routes `validate`'s structure check through Excel's own verdict |
-| `KS4XL_COM_TIMEOUT` | Bounds how long a COM call may take |
-| `KS4XL_UPDATE_CHECK` | `off` turns the update check off completely: no network call, no cache file (the older `KS4XL_NO_UPDATE_CHECK=1` still works) |
-
-**Update check.** The server looks for a newer release on PyPI only when you
-call `get_server_info`, never at startup and never on a timer, at most one request
-every seven days, capped at two seconds. The check is a single plain HTTPS
-GET to pypi.org that sends nothing but the request itself. A failed check is
-reported with its reason rather than hidden. Set `KS4XL_UPDATE_CHECK=off` to turn it off
-completely (the older `KS4XL_NO_UPDATE_CHECK=1` still works). The server never
-downloads or installs anything.
-
-</details>
-
-For guided Windows setup, signed license receipts, and email support, see the KitchenSink4AI Business edition: https://kitchensink4.ai/products/business/
+- **129 workbook operations, 67 tools.** Many tools here are action
+  multiplexers, so the tool count undersells the surface: `manage_worksheet`
+  alone performs seven distinct operations, `manage_table` nine, `validate`
+  runs nine correctness batteries. The operations figure comes from
+  `scripts/count_operations.py`, which reads the dispatch values each tool
+  actually validates, out of committed source, and never from hand-math. Its
+  docstring carries the counting definition and what is deliberately excluded.
+  A committed snapshot (`scripts/operations_snapshot.json`) plus a guard test
+  make a drifting figure a test failure rather than a marketing decision.
+- **Tiered loading: starts at about 15.5k tokens, scales to everything.** A
+  fresh session loads the 40-tool lite core and turns on capability packs only
+  when a task needs them, with one `enable_tools` call. Load every pack and
+  the full surface measures about 24,200 tokens. All figures come from
+  `scripts/measure_surface.py`; see [Context cost](#context-cost-measured).
 
 ## Context cost (measured)
 
@@ -316,10 +252,6 @@ paths, so `..\` traversal, symlink and junction escapes, short names, case
 tricks, and lookalike sibling directories are all caught. A blocked call
 refuses with a typed error naming the offending path and the allowed roots
 before any file is opened.
-
-## Privacy Policy
-
-[[OWNER: privacy policy section, links https://kitchensink4.ai/privacy/]]
 
 ## Testing
 
@@ -415,6 +347,95 @@ makes them for you.)
   pick it back up on re-enable, even though the server announces the change
   both ways. If a re-enabled tool comes back as "no such tool", refresh the
   tool list on the client side.
+
+## Install options and settings
+
+The install routes are at the top of this file. This section covers what you
+can change once the server is connected.
+
+First launch through uvx downloads and builds the environment and can take 20
+to 30 seconds before the server answers; every launch after that starts in
+about two. If a client reports a timeout on first install, launch once from a
+terminal and try again.
+
+### Claude Desktop extension settings
+
+The extension's settings page offers two switches. **Verify every save with
+Excel** turns on the deep check, where a real hidden Excel has to open the
+saved file cleanly or the backup is restored; it is off by default because it
+costs a round trip through Excel on every write. **Limit the server to one
+folder** confines every path the server touches, reads included, to a
+directory you pick.
+
+<details>
+<summary><b>For developers: pip, uvx, source, other MCP clients</b></summary>
+
+Install the package and point any MCP client at the executable:
+
+```
+pip install kitchensink4xl
+```
+
+```json
+{"mcpServers": {"xl": {"command": "kitchensink4xl", "env": {"KS4XL_MODE": "lite"}}}}
+```
+
+The mode is `"lite"` (the default), `"full"`, or a comma-separated pack list.
+The `xl-mcp` executable is an equivalent entry point. The installed package is
+named `xlsx_mcp`, so a client that wants an interpreter and a module instead
+of a console script can run `python -m xlsx_mcp`.
+`python -m xlsx_mcp.server` starts the same server and is what releases
+before 1.1 support. Running from a clone
+works the same way; point the command at the `xl-mcp` executable in the
+clone's virtual environment:
+
+Windows:
+
+```
+git clone https://github.com/KitchenSink4AI/KitchenSink4XL
+cd KitchenSink4XL
+python -m venv .venv
+.venv\Scripts\pip install -e ".[com]"
+claude mcp add xl -s user -- <absolute-path>\.venv\Scripts\xl-mcp.exe
+```
+
+macOS and Linux:
+
+```
+git clone https://github.com/KitchenSink4AI/KitchenSink4XL
+cd KitchenSink4XL
+python3 -m venv .venv
+.venv/bin/pip install -e ".[com]"
+claude mcp add xl -s user -- <absolute-path>/.venv/bin/xl-mcp
+```
+
+The COM pack is an optional extra, `pip install kitchensink4xl[com]`, and it
+is a no-op off Windows. On Windows the COM dependency often arrives
+transitively with the base install; installing with `[com]` is the guaranteed
+route either way, and harmless to repeat. With no install at all:
+`uvx kitchensink4xl`.
+
+Environment variables the server reads:
+
+| Variable | What it does |
+|---|---|
+| `KS4XL_MODE` | Startup surface: `lite` (default), `full`, or a comma-separated pack list |
+| `KS4XL_PACK_POLICY` | `auto` (default) or `locked`, which fixes the surface at startup |
+| `KS4XL_ALLOWED_ROOTS` | Path sandbox: an `os.pathsep`-separated list of directories |
+| `KS4XL_VERIFY_COM` | `1` makes the deep Excel verification the default for every save |
+| `KS4XL_VALIDATE_COM` | `1` routes `validate`'s structure check through Excel's own verdict |
+| `KS4XL_COM_TIMEOUT` | Bounds how long a COM call may take |
+| `KS4XL_UPDATE_CHECK` | `off` turns the update check off completely: no network call, no cache file (the older `KS4XL_NO_UPDATE_CHECK=1` still works) |
+
+**Update check.** The server looks for a newer release on PyPI only when you
+call `get_server_info`, never at startup and never on a timer, at most one request
+every seven days, capped at two seconds. The check is a single plain HTTPS
+GET to pypi.org that sends nothing but the request itself. A failed check is
+reported with its reason rather than hidden. Set `KS4XL_UPDATE_CHECK=off` to turn it off
+completely (the older `KS4XL_NO_UPDATE_CHECK=1` still works). The server never
+downloads or installs anything.
+
+</details>
 
 ## License
 
