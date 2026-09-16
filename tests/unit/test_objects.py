@@ -235,6 +235,77 @@ def test_chart_types_all_survive(tmp_path, ctype, cls):
     assert listing["charts"][0]["anchor"] == "F2"
 
 
+def _chart_xml(path, part="xl/charts/chart1.xml"):
+    with zipfile.ZipFile(path) as z:
+        return z.read(part).decode("utf-8")
+
+
+@pytest.mark.parametrize("ctype", ["bar", "bar_horizontal", "line", "area",
+                                   "scatter"])
+def test_chart_axes_are_drawn_by_default(tmp_path, ctype):
+    """The launch-shots finding: openpyxl leaves c:delete unset, an omitted
+    c:delete reads as a deleted axis, and every chart shipped with no scale
+    to read the plot against. Both flags are now written as false, on the
+    category axis and the value axis, for every chart type that has them.
+
+    The assertion is on the written part rather than on a re-opened model
+    because openpyxl's reader does not reattach the axes of every chart
+    type (an area chart comes back with an empty axId list and therefore
+    with default axis objects), and the part is what Excel reads."""
+    p = _make(tmp_path)
+    _chart_data(p)
+    _objects.manage_chart(p, "create", chart_type=ctype,
+                          data={"range": "B1:C4"})
+    xml = _chart_xml(p)
+    assert xml.count('<delete val="0"/>') == 2
+    assert '<delete val="1"/>' not in xml
+
+
+def test_chart_axes_visible_in_the_reopened_model(tmp_path):
+    """The flags also survive back into openpyxl's own model for a chart
+    type its reader reattaches axes for."""
+    p = _make(tmp_path)
+    _chart_data(p)
+    _objects.manage_chart(p, "create", chart_type="bar",
+                          data={"range": "B1:C4"})
+    wb = openpyxl.load_workbook(p)
+    ch = wb["Data"]._charts[0]
+    assert ch.x_axis.delete is False
+    assert ch.y_axis.delete is False
+    wb.close()
+
+
+@pytest.mark.parametrize("ctype", ["bar", "bar_horizontal", "line", "area",
+                                   "scatter"])
+def test_chart_show_axes_false_suppresses_both_axes(tmp_path, ctype):
+    """The opt-out is real, so a caller who wants a bare plot area can
+    still have one."""
+    p = _make(tmp_path)
+    _chart_data(p)
+    _objects.manage_chart(p, "create", chart_type=ctype,
+                          data={"range": "B1:C4"}, show_axes=False)
+    xml = _chart_xml(p)
+    assert xml.count('<delete val="1"/>') == 2
+    assert '<delete val="0"/>' not in xml
+
+
+@pytest.mark.parametrize("ctype", ["pie", "doughnut"])
+@pytest.mark.parametrize("show_axes", [True, False])
+def test_axis_free_chart_types_do_not_crash(tmp_path, ctype, show_axes):
+    """Pie and doughnut have no x_axis or y_axis attribute in openpyxl, so
+    the visibility pass has to leave them alone rather than raise."""
+    p = _make(tmp_path)
+    _chart_data(p)
+    out = _objects.manage_chart(p, "create", chart_type=ctype,
+                                data={"range": "B1:C4"},
+                                show_axes=show_axes)
+    assert out["ok"] is True and out["verified"] is True
+    wb = openpyxl.load_workbook(p)
+    ch = wb["Data"]._charts[0]
+    assert not hasattr(ch, "x_axis")
+    wb.close()
+
+
 def test_chart_survives_subsequent_cell_edit(tmp_path):
     """After creating a chart the workbook holds a degrade hazard; a later
     cell edit proceeds with the degrade warning and the chart part

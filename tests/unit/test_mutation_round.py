@@ -256,7 +256,7 @@ class TestStaleLockBreaking:
                     pytest.fail("a live holder's lock was broken")
             assert str(proc.pid) in str(ei.value)
 
-    def test_a_live_holders_ancient_lock_is_broken_anyway(
+    def test_a_live_holders_ancient_lock_is_respected(
             self, tmp_path, monkeypatch):
         target = _book(tmp_path / "book.xlsx")
         lock = safesave.slot_dir(target, create=True) / safesave.LOCK_FILE_NAME
@@ -265,9 +265,11 @@ class TestStaleLockBreaking:
             _write_lockfile(
                 lock, pid=proc.pid,
                 stamp=time.time() - safesave.LOCK_STALE_SECONDS - 60)
-            with safesave.write_lock(target):
-                info = json.loads(lock.read_text(encoding="utf-8"))
-                assert info["token"] == safesave._OWNER_TOKEN
+            original = lock.read_bytes()
+            with pytest.raises(safesave.MutationLockTimeout):
+                with safesave.write_lock(target):
+                    pytest.fail("a slow live writer must keep its lock")
+            assert lock.read_bytes() == original
 
     def test_the_staleness_boundary_is_strictly_greater_than(
             self, tmp_path, monkeypatch):

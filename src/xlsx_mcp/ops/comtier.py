@@ -749,11 +749,87 @@ def _clipboard_available() -> bool:
     return True
 
 
+#: A PNG palette this small holds nothing but a background, a border and
+#: their antialiasing. Measured on this machine: Excel exports an empty
+#: chart canvas with a six-entry palette at every canvas size, while the
+#: thinnest real render seen (four columns of EMPTY cells, gridlines only)
+#: came back with thirty entries and a single cell holding the number 1
+#: came back with eighty. Eight is the ceiling because it sits above the
+#: artefact and an order of magnitude below the thinnest real picture.
+_BLANK_PALETTE_CEILING = 8
+
+_PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+
+
+def _png_palette_size(path: str) -> int | None:
+    """How many distinct colours an exported PNG can possibly hold.
+
+    A palette PNG cannot show more colours than its PLTE chunk declares, so
+    the chunk length is an exact upper bound on the picture's content and
+    reading it costs a few header bytes rather than a decode. Excel exports
+    the blank artefact as a palette PNG and anything with real content in it
+    as either a larger palette or truecolour.
+
+    Returns the entry count for a palette PNG, and None for any other colour
+    type or for a file that is not a readable PNG. None means "no cheap
+    bound", never "blank": a truecolour export is rich by construction.
+    """
+    try:
+        with open(path, "rb") as fh:
+            if fh.read(8) != _PNG_MAGIC:
+                return None
+            colour_type = None
+            while True:
+                head = fh.read(8)
+                if len(head) < 8:
+                    return None
+                length = int.from_bytes(head[:4], "big")
+                kind = head[4:8]
+                if kind == b"IHDR":
+                    data = fh.read(length)
+                    if len(data) < 10:
+                        return None
+                    colour_type = data[9]
+                    if colour_type != 3:
+                        return None
+                    fh.read(4)
+                    continue
+                if kind == b"PLTE":
+                    return length // 3
+                if kind == b"IDAT" or kind == b"IEND":
+                    return None
+                fh.seek(length + 4, os.SEEK_CUR)
+    except OSError:
+        return None
+
+
+def _render_is_blank(path: str) -> bool:
+    """True when the exported PNG holds no more than a background and a
+    border. See _BLANK_PALETTE_CEILING for where the number comes from."""
+    bound = _png_palette_size(path)
+    return bound is not None and bound <= _BLANK_PALETTE_CEILING
+
+
+_BLANK_RENDER_REFUSAL = (
+    "Excel exported the picture but it came back blank: the canvas holds "
+    "a background and a border and nothing else. The range was copied and "
+    "the export ran, so this is not a bad range or a missing file. Use "
+    "com_export_pdf on the same workbook (scope='sheet' or scope='range'), "
+    "which draws the cells through a different Excel route and works here.")
+
+
 def com_render_sheet(path: str, output: str, sheet: str | None = None,
                      range_a1: str | None = None, overwrite: bool = False,
                      timeout_seconds: float | None = None) -> dict:
     """Render a sheet's used range (or a given range) to a PNG image for
-    visual verification, via CopyPicture into a temporary chart canvas."""
+    visual verification, via CopyPicture into a temporary chart canvas.
+
+    The canvas is ACTIVATED before the paste and the paste is checked, and
+    the exported file is checked again on the way out. Both checks exist
+    because the failure this call had was silent in every direction: the
+    clipboard held the bitmap, the paste reported nothing, the export
+    reported success, and the caller got a white rectangle under ok:true.
+    """
     p = _norm_path(path, "com_render_sheet")
     # The CALLER's own arguments are judged before the environment is. A
     # .bmp target is wrong on every machine, and answering it with a
@@ -786,14 +862,25 @@ def com_render_sheet(path: str, output: str, sheet: str | None = None,
                 raise XlMcpError("the target range has no visible size")
             co = ws.ChartObjects().Add(0, 0, width, height)
             try:
+                # ACTIVATE BEFORE PASTE. Chart.Paste() into a chart canvas
+                # that is not the active chart does nothing at all, and it
+                # says nothing about it: no error, no return value, an empty
+                # canvas. Chart.Export then succeeds on that empty canvas,
+                # which is how this call handed back ok:true over a white
+                # rectangle. The hidden instance is not the cause; the
+                # clipboard holds the bitmap either way.
+                co.Activate()
                 co.Chart.Paste()
+                pasted = int(co.Chart.Shapes.Count)
+                if pasted < 1:
+                    raise ValidationFailed(_BLANK_RENDER_REFUSAL)
                 _session.com_retry(
                     lambda: co.Chart.Export(os.path.abspath(out), "PNG"),
                     label="Chart.Export")
             finally:
                 co.Delete()
             return {"rendered": out, "range": str(rng.Address),
-                    "sheet": str(ws.Name)}
+                    "sheet": str(ws.Name), "pasted_shapes": pasted}
         except XlMcpError:
             raise
         except Exception as exc:  # noqa: BLE001
@@ -805,6 +892,17 @@ def com_render_sheet(path: str, output: str, sheet: str | None = None,
     if not os.path.exists(out) or os.path.getsize(out) == 0:
         raise ValidationFailed(
             "Excel reported success but the PNG is missing or empty")
+    # The backstop. The paste is checked in the worker, but a picture can
+    # also land and still export as nothing, and a file on disk that a
+    # caller was told to trust is the worst place for that to be true. The
+    # blank file is removed, because a refusal that leaves the artefact
+    # behind is the same lie in a different place.
+    if _render_is_blank(out):
+        try:
+            os.remove(out)
+        except OSError:
+            pass
+        raise ValidationFailed(_BLANK_RENDER_REFUSAL)
     result.update(out_info)
     result["ok"] = True
     result["file"] = p

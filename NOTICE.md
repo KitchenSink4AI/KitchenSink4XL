@@ -1,5 +1,7 @@
 # KitchenSink4XL : License Notice
 
+KitchenSink4XL is Copyright (c) 2026 Alvut Consulting, LLC.
+
 KitchenSink4XL is dual-licensed:
 
 **AGPL-3.0 (open source).** Free for anyone (individuals, academics, and businesses) for any use that complies with the AGPL's terms. Those terms include sharing source, including your modifications, when you distribute the software or make it available over a network.

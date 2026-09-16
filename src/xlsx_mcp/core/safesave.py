@@ -39,7 +39,7 @@ Write serialization (fixes the parallel read-modify-save race):
   carrying PID + a per-process-instance TOKEN + a timestamp minted at
   publication. The file is written complete and linked into place, so it is
   never observable half-written. Stale locks (dead PID, our own recycled PID
-  under a foreign token, or older than LOCK_STALE_SECONDS) are broken;
+  under a foreign token, under a local host identity) are broken;
   otherwise acquisition waits up to LOCK_WAIT_SECONDS and then refuses with
   MutationLockTimeout naming the holder. Release removes the file only while
   it still carries our token.
@@ -57,6 +57,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import socket
 import shutil
 import sys
 import threading
@@ -85,8 +86,8 @@ ANCHOR_IDLE_SECONDS = 60 * 60
 LOCK_FILE_NAME = "write.lock"
 #: How long an acquirer waits for a live holder before refusing.
 LOCK_WAIT_SECONDS = 10.0
-#: A lockfile older than this is broken regardless of PID liveness
-#: (generous: no single mutation legitimately holds the lock this long).
+#: Historical age threshold, retained for compatibility only.
+#: Elapsed time never evicts a live holder.
 LOCK_STALE_SECONDS = 10 * 60
 
 #: Slot folder names longer than this are truncated + hash-suffixed
@@ -500,7 +501,7 @@ def _publish_lockfile(lock_path: Path) -> bool:
         "pid": os.getpid(),
         "token": _OWNER_TOKEN,
         "time": time.time(),
-        "host": os.environ.get("COMPUTERNAME", ""),
+        "host": _local_host(),
     })
     tmp = lock_path.parent / f".lock-{uuid.uuid4().hex}.tmp"
     try:
@@ -532,8 +533,27 @@ def _publish_lockfile(lock_path: Path) -> bool:
             pass
 
 
+def _local_host() -> str:
+    return os.environ.get("COMPUTERNAME") or socket.gethostname()
+
+
+def _foreign_host(info: dict) -> bool:
+    # Legacy locks without host metadata retain local-machine behavior.
+    host = info.get("host")
+    return bool(host) and (not isinstance(host, str)
+                           or host.casefold() != _local_host().casefold())
+
+
 def _is_ours(info: dict) -> bool:
-    return info.get("token") == _OWNER_TOKEN
+    return not _foreign_host(info) and info.get("token") == _OWNER_TOKEN
+
+
+def _is_stale(info: dict) -> bool:
+    """Only local dead/recycled owners can be reclaimed; age is not proof."""
+    if _foreign_host(info):
+        return False
+    pid = info.get("pid", -1)
+    return not isinstance(pid, int) or not _pid_alive(pid) or pid == os.getpid()
 
 
 def _acquire_lockfile(lock_path: Path, doc_name: str) -> bool:
@@ -572,16 +592,7 @@ def _acquire_lockfile(lock_path: Path, doc_name: str) -> bool:
             else:
                 time.sleep(0.1)
             continue
-        stale = (
-            not isinstance(pid, int)
-            or not _pid_alive(pid)
-            or age is None
-            or age > LOCK_STALE_SECONDS
-            # Our own PID with someone else's token: the number was recycled
-            # and this lock belongs to a process that is gone.
-            or pid == os.getpid()
-        )
-        if stale:
+        if _is_stale(info):
             _break_lock(lock_path)
             continue
         if time.monotonic() > deadline:

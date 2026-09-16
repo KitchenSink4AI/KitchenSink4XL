@@ -53,9 +53,11 @@ from . import envelope as _envelope
 from . import packs as _packs
 from .core import package as _package
 from .core import readonly as _readonly
+from .core import tool_annotations as _toolann
 from .core import schemas as _schemas
 from .core import sandbox as _sandbox
 from .core import update_check as _upd
+from .core import star_nudge as _star_nudge
 from .core.errors import XlMcpError as _XlMcpError
 from .ops import annotations as _annotations
 from .ops import backups as _backups
@@ -206,9 +208,9 @@ def _tool(pack: str):
 
         tool = _FunctionTool.from_function(
             boundary,
-            annotations={
-                "readOnlyHint": _readonly.read_only_hint(fn.__name__)
-            },
+            annotations=_toolann.annotations(
+                fn.__name__, _readonly.read_only_hint(fn.__name__)
+            ),
             # No outputSchema. Every tool here returns `dict`, from which
             # fastmcp derives {"type": "object", "additionalProperties": true}
             # -- a schema that validates nothing, costs 828 tokens of surface
@@ -1214,8 +1216,9 @@ def manage_chart(path: str, action: str, chart_type: str | None = None,
                  title: str | None = None, x_title: str | None = None,
                  y_title: str | None = None, anchor: str | None = None,
                  sheet: str | None = None, index: int | None = None,
-                 titles_from_data: bool = True, allow_loss: bool = False,
-                 backup: bool = True, verify_com: bool | None = None) -> dict:
+                 titles_from_data: bool = True, show_axes: bool = True,
+                 allow_loss: bool = False, backup: bool = True,
+                 verify_com: bool | None = None) -> dict:
     """Create, list, and delete charts. action create takes chart_type (bar,
     bar_horizontal, line, pie, doughnut, area, scatter), data (a location
     object; its first row supplies series titles unless titles_from_data is
@@ -1223,6 +1226,10 @@ def manage_chart(path: str, action: str, chart_type: str | None = None,
     categories, title, x_title, y_title, and an anchor cell (default just
     right of the data). list reports each chart's sheet, index, type,
     title, and anchor; delete takes sheet plus index or title.
+
+    Axes are drawn by default. Pass show_axes false for a bare plot area
+    with no category or value axis; pie and doughnut have no axes either
+    way.
 
     Fidelity honesty: chart fidelity is model-mediated. openpyxl
     re-serializes every chart through its own model on save, so a complex
@@ -1236,8 +1243,8 @@ def manage_chart(path: str, action: str, chart_type: str | None = None,
         path, action, chart_type=chart_type, data=data,
         categories=categories, title=title, x_title=x_title,
         y_title=y_title, anchor=anchor, sheet=sheet, index=index,
-        titles_from_data=titles_from_data, allow_loss=allow_loss,
-        backup=backup, verify_com=verify_com)
+        titles_from_data=titles_from_data, show_axes=show_axes,
+        allow_loss=allow_loss, backup=backup, verify_com=verify_com)
 
 
 # --------------------------------------------------------------- protection
@@ -1658,8 +1665,9 @@ def com_render_sheet(path: str, output: str, sheet: str | None = None,
     Excel displays it: formatting, conditional formats, charts in range,
     and sparklines included. Use it to visually verify edits without
     opening Excel by hand. output must be a .png path; existing files
-    refuse unless overwrite:true. Read-only on the workbook. Runs in a
-    private hidden Excel instance, serialized and timeout-bounded."""
+    refuse unless overwrite:true. Read-only on the workbook, in a private
+    hidden Excel instance, serialized and timeout-bounded. A picture that
+    comes back blank is a refusal naming com_export_pdf, never an ok."""
     return _comtier.com_render_sheet(
         path, output, sheet=sheet, range_a1=range_a1, overwrite=overwrite,
         timeout_seconds=timeout_seconds)
@@ -1910,6 +1918,10 @@ def main() -> None:
         mcp.add_transform(_Visibility(False, names=disabled))
     # No update check here. It runs ON DEMAND, inside get_server_info, and
     # nowhere else: startup starts no thread and asks PyPI nothing.
+    # The one-time star nudge, last, after startup has already succeeded.
+    # It is a single line on stderr on the very first run of an install and
+    # nothing at all thereafter; it asks the network nothing.
+    _star_nudge.announce_once()
     mcp.run()
 
 

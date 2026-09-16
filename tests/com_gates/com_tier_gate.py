@@ -285,6 +285,13 @@ def main() -> int:  # noqa: PLR0915
             r = comtier.com_render_sheet(str(p_calc), str(png), sheet="Data")
             check(r["ok"] and png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n",
                   "4 render_sheet: produced a real PNG of the used range")
+            # A PNG header is not a picture. The launch shots caught this
+            # call returning ok:true over a white rectangle, so the gate
+            # asks whether the cells are actually in it.
+            check(r.get("pasted_shapes", 0) >= 1
+                  and not comtier._render_is_blank(str(png)),
+                  "4 render_sheet: the PNG has the cells in it, not a "
+                  "blank canvas")
         else:
             skip_check(
                 "4 render_sheet: produced a real PNG of the used range",

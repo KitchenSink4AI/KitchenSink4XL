@@ -210,7 +210,16 @@ def test_menu_matches_registry_and_costs():
 #: measurement; 14,548 x 1.026 is 14,900, so that is the ceiling in the
 #: honest unit. This is a unit conversion, not a relaxation: a lite surface
 #: that grows by more than it could have grown yesterday still goes red.
-LITE_TOKEN_CEILING = 14_900
+#: RE-BASED 2026-09-16, and this one IS a surface growth rather than a unit
+#: change. Every tool now ships the title and destructiveHint the Anthropic
+#: Connectors Directory requires, plus openWorldHint and, where it is
+#: obviously true, idempotentHint. That metadata is ~25 tokens a tool and
+#: lite reads 15,454 where it read 14,548. The cost buys the listing and is
+#: not optional, so the ceiling moves with the same author-set 2.6% headroom
+#: it has always carried: 15,454 x 1.026 is 15,850, rounded to 15,900. What
+#: the ceiling still catches is unchanged: a lite surface that grows by more
+#: than the annotations cost goes red.
+LITE_TOKEN_CEILING = 15_900
 
 
 def test_pack_bills_cost_aware():
