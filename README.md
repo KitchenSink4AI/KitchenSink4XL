@@ -4,7 +4,7 @@
      the registry looks for the one string that matches server.json. -->
 <!-- mcp-name: io.github.KitchenSink4AI/kitchensink4xl -->
 
-# 🔌 KitchenSink4XL
+# 🔌 KitchenSink4XL Community Edition
 
 [![Tests](https://github.com/KitchenSink4AI/KitchenSink4XL/actions/workflows/tests.yml/badge.svg)](https://github.com/KitchenSink4AI/KitchenSink4XL/actions/workflows/tests.yml)
 [![PyPI](https://img.shields.io/pypi/v/kitchensink4xl)](https://pypi.org/project/kitchensink4xl/)
