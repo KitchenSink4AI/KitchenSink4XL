@@ -185,8 +185,8 @@ def test_guard_truly_locked_refuses(tmp_path, monkeypatch):
 @pytest.mark.skipif(not com_session.com_available()[0],
                     reason="COM plumbing absent (executor needs pywin32)")
 class TestExecutor:
-    def test_serialization_and_result(self):
-        ex = com_session.ComExecutor()
+    def test_serialization_and_result(self, tmp_path):
+        ex = com_session.ComExecutor(journal_path=tmp_path / "test-excel-pids.json")
         order: list[int] = []
 
         def op(i):
@@ -211,8 +211,8 @@ class TestExecutor:
         assert len(order) == 4
         ex.shutdown()
 
-    def test_timeout_poisons_and_rearms(self):
-        ex = com_session.ComExecutor()
+    def test_timeout_poisons_and_rearms(self, tmp_path):
+        ex = com_session.ComExecutor(journal_path=tmp_path / "test-excel-pids.json")
         with pytest.raises(ExcelBlocked, match="timeout"):
             ex.submit("slowpoke", lambda m: time.sleep(5), timeout=0.2)
         st = ex.status()
@@ -221,8 +221,8 @@ class TestExecutor:
         assert ex.submit("quick", lambda m: 42, timeout=10) == 42
         ex.shutdown()
 
-    def test_error_propagates(self):
-        ex = com_session.ComExecutor()
+    def test_error_propagates(self, tmp_path):
+        ex = com_session.ComExecutor(journal_path=tmp_path / "test-excel-pids.json")
 
         def boom(manager):
             raise XlMcpError("inner failure")
