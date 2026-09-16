@@ -4,7 +4,7 @@ Every declared dependency, its license, and why it is here. Enforced by
 `tests/unit/test_dependency_ledger.py`, which fails the build if
 `pyproject.toml` grows a dependency that is not listed here. Ported from
 KitchenSink4Web, which carried the only ledger in the family until the
-2026-09-15 licence audit (finding D-02).
+2026-09-15 license audit (finding D-02).
 
 Licenses below were read from the installed package metadata in this repo's
 virtual environment (`importlib.metadata`), not from a search result.
