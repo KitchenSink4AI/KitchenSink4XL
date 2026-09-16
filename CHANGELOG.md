@@ -1,5 +1,11 @@
 # Changelog
 
+### 1.2.3
+- A workbook mutation that runs longer than ten minutes keeps its write lock. The lock was previously broken on age alone even while the holding process was alive, which let a second writer into the same file and reopened the read-modify-save race the lock exists to close.
+- A lock written by another machine is never reclaimed from this one. A PID number on a network share says nothing about a process on a different computer, so a foreign-host lock now makes the waiter wait and then refuse by name.
+- `com_render_sheet` renders. It previously returned a success result without producing an image; it now produces the image, or refuses and says why.
+- Charts this server creates are drawn with their axes.
+
 ### 1.2.2
 - The license story is stated correctly and in one place. KitchenSink4XL is dual-licensed: AGPL-3.0 for anyone whose use meets the AGPL's terms, including its source-sharing obligations, and a commercial license for organizations that need to ship it inside a closed product (licensing@kitchensink4.ai). NOTICE.md previously said "free for any use (personal, academic, commercial) under AGPL terms", which contradicted the commercial model.
 - Copyright is attributed: Alvut Consulting, LLC, named at the top of LICENSE, in NOTICE.md, in the README, in the package author field, and as the grantee in the CLA.
