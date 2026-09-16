@@ -14,7 +14,7 @@
 
 **Read and edit Excel workbooks with your AI assistant, and know which numbers are calculated, cached or missing.**
 
-Read and edit real Excel workbooks from Claude Code, Codex CLI, Copilot CLI or any other MCP client that runs local tools. KitchenSink4XL connects your assistant to .xlsx files with tools for formulas, tables and data checks, and it tells you whether a value was calculated, cached or never computed before you put it in a report. Files are processed on your computer; the only thing that leaves it is what your AI app sends to its own provider. The Community edition is free under the AGPL. The Business edition adds a Windows installer, a signed update channel, a licence your company can approve and support.
+Read and edit real Excel workbooks from Claude Code, Codex CLI, Copilot CLI or any other MCP client that runs local tools. KitchenSink4XL connects your assistant to .xlsx files with tools for formulas, tables and data checks, and it tells you whether a value was calculated, cached or never computed before you put it in a report. Files are processed on your computer; the only thing that leaves it is what your AI app sends to its own provider. The Community edition is free under the AGPL. The Business edition adds a Windows installer, a signed update channel, a license your company can approve and support.
 
 **Works on:** Windows, macOS and Linux for the file tools. Recalculation, pivots and the other Excel-powered features need Windows with Microsoft Excel installed.
 
@@ -50,7 +50,7 @@ Then follow your client's guide for adding a local MCP server. Installing the pa
 
 **Business edition**
 
-Compare the editions on the [pricing page](https://kitchensink4.ai/pricing/). Already purchased? Your Windows installer and download link are in your [licence portal](https://get.kitchensink4.ai/my-license/).
+Compare the editions on the [pricing page](https://kitchensink4.ai/pricing/). Already purchased? Your Windows installer and download link are in your [license portal](https://get.kitchensink4.ai/my-license/).
 
 ## What it can do
 
@@ -69,7 +69,7 @@ What is available depends on the packs you enable and the applications installed
 
 ## Business edition
 
-Need a licence your company can approve and a setup someone supports? The Business edition pairs these tools with a Windows installer, a signed update channel and support under the Business terms. Update checks tell you when a covered release is available; nothing installs on its own. Compare the options on the [pricing page](https://kitchensink4.ai/pricing/). The Community edition stays free under the AGPL, including business use that meets its terms.
+Need a license your company can approve and a setup someone supports? The Business edition pairs these tools with a Windows installer, a signed update channel and support under the Business terms. Update checks tell you when a covered release is available; nothing installs on its own. Compare the options on the [pricing page](https://kitchensink4.ai/pricing/). The Community edition stays free under the AGPL, including business use that meets its terms.
 
 ## Privacy Policy
 
