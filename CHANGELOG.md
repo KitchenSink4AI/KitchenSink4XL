@@ -1,5 +1,8 @@
 # Changelog
 
+### 1.2.4
+- Documentation and listing only. The MCP Registry entry moves to the io.github.KitchenSink4AI namespace and is published from the release workflow. The bundle manifest carries contact details. No change to tools or behaviour.
+
 ### 1.2.3
 - A workbook mutation that runs longer than ten minutes keeps its write lock. The lock was previously broken on age alone even while the holding process was alive, which let a second writer into the same file and reopened the read-modify-save race the lock exists to close.
 - A lock written by another machine is never reclaimed from this one. A PID number on a network share says nothing about a process on a different computer, so a foreign-host lock now makes the waiter wait and then refuse by name.
