@@ -6,7 +6,7 @@
 > read returns carries a label saying whether it is current.
 
 Release: v1.2.3
-MCP registry name: io.github.nometalalchemist/kitchensink4xl
+MCP registry name: io.github.KitchenSink4AI/kitchensink4xl
 Transport: stdio.
 Platform: the file tier is cross-platform and needs no Excel installation.
 The `com` pack requires Windows with Microsoft Excel installed; it drives a
