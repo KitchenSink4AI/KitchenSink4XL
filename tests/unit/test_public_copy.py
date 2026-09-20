@@ -284,7 +284,7 @@ def test_documented_module_entry_point_resolves():
 def test_mcp_name_marker_survives():
     first = (ROOT / "README.md").read_text(encoding="utf-8").splitlines()[0]
     assert first == (
-        "<!-- mcp-name: io.github.nometalalchemist/kitchensink4xl -->"
+        "<!-- mcp-name: io.github.KitchenSink4AI/kitchensink4xl -->"
     ), "README line 1 mcp-name marker was lost"
 
 
