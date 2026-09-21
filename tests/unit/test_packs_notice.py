@@ -59,8 +59,8 @@ def test_enable_note_states_what_a_fixed_tool_list_means(restore_enabled):
     result = packs.enable(["design"])
     assert result["enabled"] == ["design"]
     note = result["note"]
-    assert note == packs.CLIENT_REFRESH_NOTE
-    assert "tools/list_changed was sent." in note
+    assert note == packs.client_note(True)
+    assert note.startswith("tools/list_changed was sent.")
     assert "this client fixed its list when the session or worker started" \
         in note
     assert "do not retry here" in note
@@ -79,7 +79,7 @@ def test_enable_note_leads_with_the_route_that_works_anywhere():
     works in Claude Code and does NOT reach a Codex worker, so it comes
     second and carries its client's name. Leading with it would send most
     readers down a path that cannot help them."""
-    note = packs.CLIENT_REFRESH_NOTE
+    note = packs.CLIENT_NOTE_BODY
     everywhere = note.index("What works in every client:")
     claude_code = note.index("Claude Code only:")
     assert everywhere < claude_code, \
@@ -91,25 +91,53 @@ def test_enable_note_leads_with_the_route_that_works_anywhere():
 def test_note_rides_the_no_op_re_enable(restore_enabled):
     """THE regression. The note used to be gated on something having flipped,
     so the second identical call, which is exactly where an agent whose client
-    ignored the first one lands, returned no note at all."""
+    ignored the first one lands, returned no note at all.
+
+    The advice is the same on both calls; only the first sentence differs,
+    because only the first call actually notified anything."""
     _reset_to_lite()
     first = packs.enable(["design"])
     second = packs.enable(["design"])
     assert second["enabled"] == []
     assert second["already_enabled"] == ["design"]
     assert second["approx_tokens_added"] == 0
-    assert second["note"] == packs.CLIENT_REFRESH_NOTE
-    assert second["note"] == first["note"]
+    assert second["note"] == packs.client_note(False)
+    assert second["note"] != first["note"]
+    assert packs.CLIENT_NOTE_BODY in second["note"]
+
+
+def test_no_op_prefix_does_not_claim_a_notification(restore_enabled):
+    """A no-op sends nothing, so the note must not say it sent something.
+    An agent debugging a tool it cannot see would otherwise go hunting for a
+    notification that was never emitted."""
+    _reset_to_lite()
+    packs.enable(["design"])
+    note = packs.enable(["design"])["note"]
+    assert note.startswith(
+        "These packs were already on, so no list change was sent.")
+    assert "tools/list_changed was sent." not in note
+
+
+def test_no_op_really_emits_nothing(restore_enabled):
+    """The claim behind the prefix, proven rather than assumed: _sync gates on
+    a non-empty name set, so the no-op never reaches the visibility hook and
+    nothing is queued for the session."""
+    _reset_to_lite()
+    packs.enable(["design"])
+    server._PENDING_VISIBILITY.clear()
+    packs.enable(["design"])
+    assert server._PENDING_VISIBILITY == []
 
 
 def test_note_rides_a_mixed_call(restore_enabled):
-    """One pack already on, one not: still one note, still the same one."""
+    """One pack already on, one not. Something DID flip, so this is a real
+    list change and takes the sent prefix."""
     _reset_to_lite()
     packs.enable(["design"])
     mixed = packs.enable(["design", "io"])
     assert mixed["enabled"] == ["io"]
     assert mixed["already_enabled"] == ["design"]
-    assert mixed["note"] == packs.CLIENT_REFRESH_NOTE
+    assert mixed["note"] == packs.client_note(True)
 
 
 def test_note_no_longer_promises_a_refresh(restore_enabled):
@@ -132,9 +160,9 @@ def test_note_survives_the_server_layer(restore_enabled):
         return first, second
 
     first, second = asyncio.run(run())
-    assert first["note"] == packs.CLIENT_REFRESH_NOTE
+    assert first["note"] == packs.client_note(True)
     assert second["enabled"] == []
-    assert second["note"] == packs.CLIENT_REFRESH_NOTE
+    assert second["note"] == packs.client_note(False)
 
 
 def test_disable_carries_no_such_note(restore_enabled):
@@ -214,7 +242,8 @@ def test_locked_refusal_already_names_the_human_who_set_it(restore_enabled,
 
 
 @pytest.mark.parametrize("text", [
-    packs.CLIENT_REFRESH_NOTE,
+    packs.client_note(True),
+    packs.client_note(False),
     packs.WORKER_SURFACE_NOTE,
 ])
 def test_notice_strings_carry_no_em_dash(text):
