@@ -63,6 +63,43 @@ PACK_SUMMARIES: dict[str, str] = {
 }
 EVERYTHING = "everything"
 
+#: Returned as `note` by EVERY successful enable(), including one that
+#: enabled nothing new.
+#:
+#: The old sentence ("re-fetch the tool list if your client does not refresh
+#: automatically") assumed the client could re-fetch. Several cannot: Claude
+#: Code workers and Codex CLI fix their tool list when the session or worker
+#: starts, so a pack enabled afterwards never becomes callable there and the
+#: agent retries enable_tools forever against a surface that already says the
+#: pack is on. That is why the note also rides the no-op re-enable: the second
+#: call is exactly where a stuck agent lands, and it is the call that used to
+#: come back with no note at all. The route out is KS4XL_MODE at launch, which
+#: is why the note names it instead of promising a refresh.
+#:
+#: The orchestrator route is offered, not promised: in some clients (Codex CLI)
+#: a pack enabled by the parent never reaches a worker at all, so the note
+#: follows it with the launch-env route for when it does not help.
+CLIENT_REFRESH_NOTE = (
+    "tools/list_changed was sent. If the new tools are not in your tool "
+    "list, this client fixed its list when the session or worker started: "
+    "do not retry here. Worker or subagent: tell your orchestrator to call "
+    "enable_tools in the main session and start a new worker. If that does "
+    "not help, or you are the main session: ask the user to add the packs "
+    "to KS4XL_MODE (comma list) in this server's launch settings, restart "
+    "the app or session, then start a new worker if needed. If enable_tools "
+    "refuses a pack, an administrator locked the tool set: do not retry."
+)
+
+#: The same fact, stated once where a client reads it before it calls
+#: anything: the server instructions (one handshake) and the get_workflows
+#: index. Single-sourced here so the two copies cannot drift.
+WORKER_SURFACE_NOTE = (
+    "Workers and subagents only see the tools that were on when they "
+    "started: enable packs in the main session before starting workers, or, "
+    "in clients that never refresh, start the server with KS4XL_MODE set to "
+    "a comma list of packs."
+)
+
 # pack -> {tool_name: fastmcp Tool}; "lite" holds the always-on core.
 _REGISTRY: dict[str, dict[str, object]] = {"lite": {}}
 
@@ -254,18 +291,13 @@ def enable(packs: list[str]) -> dict:
                 newly = True
         (enabled_now if newly else already).append(pack)
     _sync(flipped, True)
-    result = {
+    return {
         "enabled": enabled_now,
         "already_enabled": already,
         "approx_tokens_added": tokens_added,
         **surface_report(),
+        "note": CLIENT_REFRESH_NOTE,
     }
-    if enabled_now:
-        result["note"] = (
-            "tools/list_changed was sent; re-fetch the tool list if your "
-            "client does not refresh automatically"
-        )
-    return result
 
 
 def disable(packs: list[str]) -> dict:
