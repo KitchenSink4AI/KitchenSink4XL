@@ -53,8 +53,8 @@ def _reset_to_lite():
 
 def test_enable_note_states_what_a_fixed_tool_list_means(restore_enabled):
     """A first enable carries the note, and the note carries the four things
-    an agent needs: what happened, what a worker does, what to ask the user
-    for when that fails, and that a refusal is not worth retrying."""
+    an agent needs: what happened, the route that works anywhere, the one
+    that works in Claude Code, and that a refusal is not worth retrying."""
     _reset_to_lite()
     result = packs.enable(["design"])
     assert result["enabled"] == ["design"]
@@ -64,23 +64,28 @@ def test_enable_note_states_what_a_fixed_tool_list_means(restore_enabled):
     assert "this client fixed its list when the session or worker started" \
         in note
     assert "do not retry here" in note
-    assert "tell your orchestrator to call enable_tools in the main session" \
-        in note
-    assert "start a new worker" in note
+    assert "What works in every client:" in note
     assert "add the packs to KS4XL_MODE (comma list)" in note
+    assert "restart the app or session" in note
+    assert "Claude Code only:" in note
+    assert "call enable_tools in the main session" in note
+    assert "start a new worker" in note
     assert "an administrator locked the tool set: do not retry" in note
 
 
-def test_enable_note_offers_the_orchestrator_route_without_promising_it():
-    """Codex CLI cross-check: in some clients a pack the parent enables never
-    reaches a worker at all. So the note says what to do if the orchestrator
-    route does not help, instead of ending on it."""
+def test_enable_note_leads_with_the_route_that_works_anywhere():
+    """The order is the finding, not a style choice. The start-up route was
+    proven end to end in Codex CLI including workers; the orchestrator route
+    works in Claude Code and does NOT reach a Codex worker, so it comes
+    second and carries its client's name. Leading with it would send most
+    readers down a path that cannot help them."""
     note = packs.CLIENT_REFRESH_NOTE
-    orchestrator = note.index("tell your orchestrator")
-    fallback = note.index("If that does not help, or you are the main "
-                          "session:")
-    assert orchestrator < fallback, "the fallback must follow the offer"
-    assert "restart the app or session" in note
+    everywhere = note.index("What works in every client:")
+    claude_code = note.index("Claude Code only:")
+    assert everywhere < claude_code, \
+        "the universal route must come before the client-specific one"
+    assert note.index("KS4XL_MODE") < claude_code, \
+        "the launch env belongs to the universal route, not the second one"
 
 
 def test_note_rides_the_no_op_re_enable(restore_enabled):
@@ -158,14 +163,16 @@ def test_get_workflows_index_carries_the_worker_surface_note():
     assert "each step names its tool" in note
 
 
-def test_worker_surface_note_says_both_routes():
-    """Enable before starting workers, or set the launch env. Either is a way
-    out; naming only one leaves half the users stuck."""
+def test_worker_surface_note_says_both_routes_in_the_same_order():
+    """Set the launch env, or, in Claude Code, enable before starting
+    workers. Naming only one leaves half the users stuck, and the same
+    ordering finding applies here as in the enable_tools note: the route
+    that works anywhere leads."""
     note = packs.WORKER_SURFACE_NOTE
     assert "only see the tools that were on when they started" in note
-    assert "enable packs in the main session before starting workers" in note
-    assert "in clients that never refresh" in note
     assert "KS4XL_MODE set to a comma list of packs" in note
+    assert "enable packs in the main session before starting workers" in note
+    assert note.index("KS4XL_MODE") < note.index("in Claude Code")
 
 
 def test_worker_surface_note_is_single_sourced():

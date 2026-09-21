@@ -76,18 +76,20 @@ EVERYTHING = "everything"
 #: come back with no note at all. The route out is KS4XL_MODE at launch, which
 #: is why the note names it instead of promising a refresh.
 #:
-#: The orchestrator route is offered, not promised: in some clients (Codex CLI)
-#: a pack enabled by the parent never reaches a worker at all, so the note
-#: follows it with the launch-env route for when it does not help.
+#: The launch-env route LEADS because it is the one proven to work in every
+#: client, workers included. The orchestrator route comes second and is
+#: labelled for the client it works in: in Codex CLI a pack the parent enables
+#: never reaches a worker at all, so offering it first would send most readers
+#: down a path that cannot help them.
 CLIENT_REFRESH_NOTE = (
     "tools/list_changed was sent. If the new tools are not in your tool "
     "list, this client fixed its list when the session or worker started: "
-    "do not retry here. Worker or subagent: tell your orchestrator to call "
-    "enable_tools in the main session and start a new worker. If that does "
-    "not help, or you are the main session: ask the user to add the packs "
-    "to KS4XL_MODE (comma list) in this server's launch settings, restart "
-    "the app or session, then start a new worker if needed. If enable_tools "
-    "refuses a pack, an administrator locked the tool set: do not retry."
+    "do not retry here. What works in every client: ask the user to add the "
+    "packs to KS4XL_MODE (comma list) in this server's launch settings, "
+    "restart the app or session, then start a new worker if needed. Claude "
+    "Code only: the orchestrator can instead call enable_tools in the main "
+    "session and then start a new worker. If enable_tools refuses a pack, "
+    "an administrator locked the tool set: do not retry."
 )
 
 #: The same fact, stated once where a client reads it before it calls
@@ -95,9 +97,9 @@ CLIENT_REFRESH_NOTE = (
 #: index. Single-sourced here so the two copies cannot drift.
 WORKER_SURFACE_NOTE = (
     "Workers and subagents only see the tools that were on when they "
-    "started: enable packs in the main session before starting workers, or, "
-    "in clients that never refresh, start the server with KS4XL_MODE set to "
-    "a comma list of packs."
+    "started: start the server with KS4XL_MODE set to a comma list of "
+    "packs, or, in Claude Code, enable packs in the main session before "
+    "starting workers."
 )
 
 # pack -> {tool_name: fastmcp Tool}; "lite" holds the always-on core.
