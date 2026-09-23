@@ -14,6 +14,7 @@ skipped, and the notes carry the judgment calls a caller should know.
 from __future__ import annotations
 
 from ..core.errors import XlMcpError
+from ..packs import WORKER_SURFACE_NOTE
 
 #: Tools named in steps that are DECLARED but not yet registered. The COM
 #: tier shipped, so the set is empty; the registry test treats members as
@@ -313,7 +314,7 @@ def get_workflows(task: str | None = None) -> dict:
                       for name, wf in WORKFLOWS.items()],
             "note": ("call get_workflows(task='<name>') for the recipe; "
                      "each step names its tool, why, and the pack to "
-                     "enable (lite is always on)"),
+                     "enable (lite is always on). " + WORKER_SURFACE_NOTE),
         }
     key = _TASK_ALIASES.get(str(task).strip().lower(), task)
     wf = WORKFLOWS.get(key)

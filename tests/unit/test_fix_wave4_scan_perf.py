@@ -90,13 +90,25 @@ class TestCatastrophicScanFixed:
         # The regex itself, with the prefilter DEFEATED (a real ca="1" cell
         # exists): the walk over ~480k self-closing cells must be linear.
         # Before the fix this was O(cells x filesize): >28 min at this scale.
+        #
+        # Timed in CPU seconds of this process, not wall seconds. The
+        # regression is a CPU-bound regex blow-up: with the pre-fix pattern
+        # swapped back in, the call burns 0.93 to 0.98 CPU seconds per wall
+        # second, so this clock sees all of it (600 rows already cost 4.9
+        # CPU seconds). Wall time also counts every moment the test spent
+        # waiting for a core: the fixed scan uses about 1 CPU second here,
+        # yet it read 5.7 wall seconds on a loaded machine and failed a run
+        # that had nothing to do with it. process_time() counts every thread
+        # of the process, so no share of the work can escape the bound, and
+        # the 5.0 bound itself is unchanged.
         book = _make_qb_shape(tmp_path / "qb_ca.xlsx", with_ca=True)
         copy = tmp_path / "qb_ca_copy.xlsx"
         shutil.copy2(book, copy)
-        t0 = time.perf_counter()
+        t0 = time.process_time()
         core_calc.restore_always_calc_cache(str(book), str(copy))
-        dt = time.perf_counter() - t0
-        assert dt < 5.0, f"restore_always_calc_cache took {dt:.1f}s"
+        dt = time.process_time() - t0
+        assert dt < 5.0, (
+            f"restore_always_calc_cache used {dt:.1f} CPU seconds")
 
     def test_prefilter_skips_ca_free_parts(self, tmp_path):
         book = _make_qb_shape(tmp_path / "qb_nca.xlsx", with_ca=False)

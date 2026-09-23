@@ -113,8 +113,14 @@ mcp = FastMCP(
         "Sessions start lite; enable_tools loads optional packs, including "
         "the com pack that drives a private hidden Excel (Windows + Excel "
         "required) for real pivot tables, fidelity recalculation, PDF "
-        "export, rendering, conversion, and encryption. Not affiliated "
-        "with Microsoft Corporation."
+        "export, rendering, conversion, and encryption. "
+        # Single-sourced from packs.py so this copy and the get_workflows
+        # index note cannot drift. Clients that fix their tool list at
+        # session or worker start never see a pack enabled afterwards, so
+        # the fact belongs where it is read BEFORE the first enable_tools
+        # call, not only in that call's result.
+        + _packs.WORKER_SURFACE_NOTE +
+        " Not affiliated with Microsoft Corporation."
     ),
 )
 
