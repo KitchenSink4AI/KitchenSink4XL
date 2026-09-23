@@ -1,5 +1,8 @@
 # Changelog
 
+### Unreleased
+- `enable_tools` now says what to do when a client fixed its tool list at startup. Put a comma list of packs in `KS4XL_MODE`, restart the app or session, and then start a new worker. Claude Code can instead enable packs in its main session before it starts workers. A locked policy still caps the surface. [[COPY: optional closing sentence, facts only. In 1.2.4 a repeat enable_tools call that changed nothing returned no note at all; the note now comes back on every successful call, and on a call that changed nothing it says no list change was sent. The server's opening instructions and the get_workflows index now state the same startup route before the first call. Do NOT reuse the PowerPoint 1.3.1 clause "and no longer claims a list change was sent when the packs were already on": Excel 1.2.4 never made that claim.]]
+
 ### 1.2.4
 - Documentation and listing only. The MCP Registry entry moves to the io.github.KitchenSink4AI namespace and is published from the release workflow. The bundle manifest carries contact details. No change to tools or behaviour.
 
