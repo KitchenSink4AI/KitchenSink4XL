@@ -163,8 +163,8 @@ The lite core carries no degraded stand-ins, so the lazy path is a dead end on
 purpose: a refusal for out-of-scope work names the exact pack and the exact
 call that unlocks it. Power users who want everything loaded from the start
 can pin it with `KS4XL_MODE=full` in the server environment, or a
-comma-separated pack list. Administrators can lock the selection with
-`KS4XL_PACK_POLICY=locked`.
+comma-separated pack list. To keep that startup tool list unchanged while the
+server runs, set `KS4XL_PACK_POLICY=locked` in its launch environment.
 
 ## Two numbers that matter
 
@@ -195,7 +195,7 @@ a shelf when the work calls for it. Here is the bill, measured by
 | Lite core | 40 | ~15.5k | From the first message of every session |
 | Design pack | 9 | ~4.3k | Only after `enable_tools` |
 | Layout plus inspection pack (`io`) | 9 | ~3.0k | Only after `enable_tools` |
-| COM pack | 11 | ~3.1k | Only after `enable_tools`, and only on Windows with Excel |
+| COM pack | 11 | ~3.1k | Only after `enable_tools`, on Windows with Excel; a save check can start a private hidden Excel without this pack |
 | Everything switched on | 69 | ~25.8k | `KS4XL_MODE=full`, if you want it all up front |
 
 No other Excel MCP server surveyed publishes what its own tool definitions
