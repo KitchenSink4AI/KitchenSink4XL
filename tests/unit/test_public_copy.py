@@ -336,6 +336,54 @@ def test_version_is_consistent_across_manifests():
     )
 
 
+# The two version stamps the manifest guard above does not read. Both were
+# bumped by hand at every release through 1.2.4 with nothing to catch a miss:
+# the llms.txt Release line an agent reads first, and the showroom's download
+# buttons, where a miss sends a Claude Desktop user to an older bundle.
+
+#: Every release-asset link in docs/index.html, whatever version it names.
+RELEASE_DOWNLOAD_LINK = re.compile(
+    r"https://github\.com/KitchenSink4AI/KitchenSink4XL/releases/download/"
+    r"[^\"\\\s<>]*")
+
+#: The rendered install panel plus its seven i18n copies (en, ko, ja, zh,
+#: de, fr, es). A locale added or dropped changes this number on purpose.
+SHOWROOM_DOWNLOAD_LINKS = 8
+
+
+def _pyproject_version() -> str:
+    import tomllib
+
+    return tomllib.loads(
+        (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )["project"]["version"]
+
+
+def test_llms_txt_release_line_matches_the_package_version():
+    version = _pyproject_version()
+    text = (ROOT / "docs" / "llms.txt").read_text(encoding="utf-8")
+    release_lines = [line for line in text.splitlines()
+                     if line.startswith("Release:")]
+    assert release_lines == [f"Release: v{version}"], (
+        f"docs/llms.txt Release line(s) {release_lines!r} do not match "
+        f"pyproject version {version}")
+
+
+def test_showroom_download_links_match_the_package_version():
+    version = _pyproject_version()
+    expected = ("https://github.com/KitchenSink4AI/KitchenSink4XL/releases/"
+                f"download/v{version}/kitchensink4xl-{version}.mcpb")
+    html = (ROOT / "docs" / "index.html").read_text(encoding="utf-8")
+    links = RELEASE_DOWNLOAD_LINK.findall(html)
+    assert len(links) == SHOWROOM_DOWNLOAD_LINKS, (
+        f"docs/index.html has {len(links)} release download links, expected "
+        f"{SHOWROOM_DOWNLOAD_LINKS} (one per install panel)")
+    stale = sorted({link for link in links if link != expected})
+    assert not stale, (
+        f"docs/index.html download links do not match pyproject version "
+        f"{version}: {stale}")
+
+
 @pytest.mark.parametrize(
     ("text", "has_beta_label"),
     [
