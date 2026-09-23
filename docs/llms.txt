@@ -18,7 +18,7 @@ below is a behavior you can rely on without testing it first.
 ## 1. Token economics
 
 - Session start loads 40 tools, about 15,500 tokens. Nothing else is on the wire until you ask for it.
-- `enable_tools(["<pack>"])` adds a pack mid-session. `disable_tools([...])` removes one. Both take effect on the next `tools/list`, announced by `tools/list_changed`.
+- `enable_tools(["<pack>"])` adds a pack mid-session. `disable_tools([...])` removes one. `enable_tools` and `disable_tools` send `tools/list_changed` when they change the visible set, but some clients keep the list from session or worker startup; set `KS4XL_MODE` to a comma list, restart the app or session, then start a new worker, or in Claude Code enable packs in the main session before starting workers.
 - Pack costs, from `scripts/measure_surface.py`: design 9 tools / 4.3k, io 9 / 3.0k, com 11 / 3.1k.
 - Everything enabled: 69 tools (67 workbook tools plus the two pack toggles), about 25,800 tokens.
 - `enable_tools(["everything"])` is the convenience alias for all packs.
