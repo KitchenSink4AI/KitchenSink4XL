@@ -1,14 +1,14 @@
 """Consolidation phase: tiered loading finalized (the KS4W Phase 4 battery).
 
 Pack membership finalized against the re-cut 69-tool surface (lite + design
-+ io + com), the KS4XL_MODE / KS4XL_PACK_POLICY startup matrix, the fastmcp
-3.x visibility route (global transform at startup, session-scoped toggles
-mid-session), and the discoverability contract (signposts, pack hints, the
-task map, workflow pack tags).
++ io + com), the KS4XL_MODE / KS4XL_PACK_POLICY startup matrix, the
+per-session pack record the session pack gate filters by (punch-list #933;
+test_session_packs.py holds its gates), and the discoverability contract
+(signposts, pack hints, the task map, workflow pack tags).
 
 Wire tests ride an in-process fastmcp Client and replicate main()'s startup
-wiring (global Visibility transform) in a try/finally that restores
-process-global state, because the FastMCP instance and the packs bookkeeping
+wiring, which is the lite default record alone, restoring the process-global
+bookkeeping afterwards because the FastMCP instance and the packs registry
 are shared with every other test in the suite.
 """
 
@@ -21,7 +21,6 @@ import pytest
 
 from fastmcp import Client
 from fastmcp.exceptions import ToolError
-from fastmcp.server.transforms.visibility import Visibility
 
 from xlsx_mcp import envelope, packs, server
 from xlsx_mcp.core.errors import XlMcpError
@@ -88,7 +87,6 @@ def restore_enabled():
     yield
     packs._ENABLED.clear()
     packs._ENABLED.update(saved)
-    server._PENDING_VISIBILITY.clear()
 
 
 # ---------------------------------------------------- membership integrity
@@ -355,62 +353,55 @@ def test_locked_policy_refuses(restore_enabled, monkeypatch):
 def test_toggle_round_trip_and_signpost(restore_enabled):
     """Startup lite -> disabled tool signposts pack + exact call -> enable
     -> visible + list_changed -> disable -> hidden -> signpost again.
-    Replicates main()'s startup wiring: session visibility rules laid down
-    by ctx.enable_components/disable_components override the global
-    transform and send ToolListChangedNotification."""
+    Replicates main()'s startup wiring, which since punch-list #933 is the
+    lite default record alone: the session's own pack record decides its
+    list and calls, and enable_tools/disable_tools send the
+    ToolListChangedNotification themselves."""
 
     async def run():
         out = {}
         _reset_to_lite()
-        server._PENDING_VISIBILITY.clear()
-        transform = Visibility(
-            False, names=server._startup_disabled_names()
-        )
-        server.mcp.add_transform(transform)
         notes: list[str] = []
 
         async def handler(message):
             notes.append(getattr(
                 getattr(message, "root", None), "method", "?"))
 
-        try:
-            async with Client(server.mcp, message_handler=handler) as c:
-                names = {t.name for t in await c.list_tools()}
-                out["startup"] = names
+        async with Client(server.mcp, message_handler=handler) as c:
+            names = {t.name for t in await c.list_tools()}
+            out["startup"] = names
 
-                with pytest.raises(ToolError) as exc:
-                    await c.call_tool("manage_chart", {
-                        "path": "x.xlsx", "action": "list",
-                    })
-                out["signpost"] = str(exc.value)
+            with pytest.raises(ToolError) as exc:
+                await c.call_tool("manage_chart", {
+                    "path": "x.xlsx", "action": "list",
+                })
+            out["signpost"] = str(exc.value)
 
-                res = await c.call_tool(
-                    "enable_tools", {"packs": ["design"]})
-                # Success results cross the wire ONCE, as compact JSON in
-                # content; structuredContent (and the outputSchema that
-                # obliged it) is gone by design.
-                assert res.structured_content is None
-                out["enable"] = json.loads(res.content[0].text)
-                await asyncio.sleep(0.1)
-                out["notes_enable"] = list(notes)
-                out["after_enable"] = {
-                    t.name for t in await c.list_tools()}
+            res = await c.call_tool(
+                "enable_tools", {"packs": ["design"]})
+            # Success results cross the wire ONCE, as compact JSON in
+            # content; structuredContent (and the outputSchema that
+            # obliged it) is gone by design.
+            assert res.structured_content is None
+            out["enable"] = json.loads(res.content[0].text)
+            await asyncio.sleep(0.1)
+            out["notes_enable"] = list(notes)
+            out["after_enable"] = {
+                t.name for t in await c.list_tools()}
 
-                notes.clear()
-                await c.call_tool(
-                    "disable_tools", {"packs": ["design"]})
-                await asyncio.sleep(0.1)
-                out["notes_disable"] = list(notes)
-                out["after_disable"] = {
-                    t.name for t in await c.list_tools()}
+            notes.clear()
+            await c.call_tool(
+                "disable_tools", {"packs": ["design"]})
+            await asyncio.sleep(0.1)
+            out["notes_disable"] = list(notes)
+            out["after_disable"] = {
+                t.name for t in await c.list_tools()}
 
-                with pytest.raises(ToolError) as exc2:
-                    await c.call_tool("manage_chart", {
-                        "path": "x.xlsx", "action": "list",
-                    })
-                out["signpost2"] = str(exc2.value)
-        finally:
-            server.mcp._transforms.remove(transform)
+            with pytest.raises(ToolError) as exc2:
+                await c.call_tool("manage_chart", {
+                    "path": "x.xlsx", "action": "list",
+                })
+            out["signpost2"] = str(exc2.value)
         return out
 
     out = asyncio.run(run())
@@ -525,28 +516,21 @@ def test_lite_enforcement_constraint_proof(restore_enabled):
     A default (KS4XL_MODE unset) session serves EXACTLY the lite registry
     and nothing else, every pack member is hidden, and a tools/call to any
     hidden member names its owning pack and the exact enable_tools call.
-    Deterministic and COM-free: the com canary is refused by the signpost
-    at the transport boundary, so no Excel instance is ever spawned.
+    Deterministic and COM-free: the com canary is refused by the session
+    pack gate at the transport boundary, so no Excel instance is ever
+    spawned.
     """
 
     async def run():
         out = {}
         _reset_to_lite()
-        server._PENDING_VISIBILITY.clear()
-        transform = Visibility(
-            False, names=server._startup_disabled_names()
-        )
-        server.mcp.add_transform(transform)
-        try:
-            async with Client(server.mcp) as c:
-                out["visible"] = sorted(t.name for t in await c.list_tools())
-                out["signposts"] = {}
-                for pack, (tool, args) in _CANARIES.items():
-                    with pytest.raises(ToolError) as exc:
-                        await c.call_tool(tool, args)
-                    out["signposts"][pack] = str(exc.value)
-        finally:
-            server.mcp._transforms.remove(transform)
+        async with Client(server.mcp) as c:
+            out["visible"] = sorted(t.name for t in await c.list_tools())
+            out["signposts"] = {}
+            for pack, (tool, args) in _CANARIES.items():
+                with pytest.raises(ToolError) as exc:
+                    await c.call_tool(tool, args)
+                out["signposts"][pack] = str(exc.value)
         return out
 
     out = asyncio.run(run())

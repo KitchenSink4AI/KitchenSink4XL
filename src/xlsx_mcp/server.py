@@ -27,8 +27,10 @@ Contract (carried from the family):
   every save, and the per-call parameter wins over that either way. The
   parameter was documented from the start and reachable from no tool until
   the live COM stress round found it (M-4).
-- Every tool carries a pack tag; visibility is the fastmcp 3.x route
-  (startup global transform + session-scoped toggles).
+- Every tool carries a pack tag. Which tools a session sees and may call
+  comes from that session's own pack record, filtered by this server's own
+  middleware (packstate.py, packgate.py; punch-list #933). No fastmcp
+  visibility state is used.
 """
 
 from __future__ import annotations
@@ -44,12 +46,12 @@ from typing import Any
 from fastmcp import FastMCP
 from fastmcp.server.context import Context as _Context
 from fastmcp.server.middleware import Middleware as _FmcpMiddleware
-from fastmcp.server.transforms.visibility import Visibility as _Visibility
 from fastmcp.tools.function_tool import FunctionTool as _FunctionTool
 from fastmcp.tools.tool import ToolResult as _FmcpToolResult
 
 from . import __version__
 from . import envelope as _envelope
+from . import packgate as _packgate
 from . import packs as _packs
 from .core import package as _package
 from .core import readonly as _readonly
@@ -181,8 +183,11 @@ class _SuccessEnvelope(_FmcpMiddleware):
         )
 
 
+# First, so outermost: which tools a session sees and may call comes from
+# that session's own pack record (punch-list #933; packgate.py).
+mcp.add_middleware(_packgate.SessionPackGate(_envelope.refuse))
 mcp.add_middleware(_SuccessEnvelope())
-mcp.add_middleware(_envelope.DisabledToolSignpost())
+mcp.add_middleware(_envelope.UnknownToolEnvelope())
 mcp.add_middleware(_envelope.InputValidationEnvelope())
 
 
@@ -194,13 +199,21 @@ def _tool(pack: str):
     ('lite' = the always-on core), and carries the readOnlyHint its
     core/readonly.py classification gives it. An unclassified tool raises
     HERE, at import, rather than reaching tools/list without anyone having
-    decided whether it can change a workbook."""
+    decided whether it can change a workbook.
+
+    The wrapper's first act, inside its try block, is the session pack
+    check (punch-list #933): a call from a session that has the tool's pack
+    off is refused here with the same envelope the session pack gate
+    middleware gives, so a route that skips the middleware still refuses.
+    It checks the name the tool was REGISTERED under, captured below."""
 
     def deco(fn):
+        registered: dict[str, str] = {}
         if _inspect.iscoroutinefunction(fn):
             @functools.wraps(fn)
             async def boundary(*args, **kwargs):
                 try:
+                    _packgate.check_call(registered["name"])
                     return await fn(*args, **kwargs)
                 except _envelope.CATCHABLE as exc:
                     return _envelope.refuse(exc)
@@ -208,6 +221,7 @@ def _tool(pack: str):
             @functools.wraps(fn)
             def boundary(*args, **kwargs):
                 try:
+                    _packgate.check_call(registered["name"])
                     return fn(*args, **kwargs)
                 except _envelope.CATCHABLE as exc:
                     return _envelope.refuse(exc)
@@ -229,8 +243,9 @@ def _tool(pack: str):
             # structuredContent.
             output_schema=None,
         )
+        registered["name"] = tool.name
         mcp.add_tool(tool)
-        _packs.register(fn.__name__, None if pack == "lite" else pack, tool)
+        _packs.register(tool.name, None if pack == "lite" else pack, tool)
         return fn
 
     return deco
@@ -1792,41 +1807,17 @@ def com_status() -> dict:
 # per-pack token bills computed from the live registry, so every other tool
 # must already be registered when this block runs.
 
-_PENDING_VISIBILITY: list[tuple[set[str], bool]] = []
-
-
-def _record_visibility(names: set[str], enabled: bool) -> None:
-    """packs.py visibility hook: bookkeeping flips queue here; the async
-    enable_tools/disable_tools bodies apply them session-scoped, and main()
-    folds startup flips into the global transform instead."""
-    _PENDING_VISIBILITY.append((set(names), enabled))
-
-
-_packs.set_visibility_hook(_record_visibility)
-
-
-async def _apply_session_visibility(ctx) -> None:
-    """Session-scoped toggles: fastmcp 3.x session visibility rules override
-    the startup global transform (later marks win) and send
-    ToolListChangedNotification to this session only. ctx=None (in-process
-    callers, unit tests) drains the queue without applying; packs
-    bookkeeping stays authoritative either way."""
-    pending = list(_PENDING_VISIBILITY)
-    _PENDING_VISIBILITY.clear()
-    if ctx is None:
-        return
-    for names, enabled in pending:
-        if enabled:
-            await ctx.enable_components(names=names)
-        else:
-            await ctx.disable_components(names=names)
+# The toggles change only the calling session's own pack record (packs.py,
+# packstate.py) and tell only that session its list changed, and only when
+# it did. No fastmcp visibility state is involved (punch-list #933).
 
 
 async def enable_tools(
     packs: list[str], ctx: _Context | None = None
 ) -> dict:
     result = _packs.enable(packs)
-    await _apply_session_visibility(ctx)
+    if result["enabled"]:
+        await _packgate.announce_list_changed(ctx)
     return result
 
 
@@ -1834,7 +1825,8 @@ async def disable_tools(
     packs: list[str], ctx: _Context | None = None
 ) -> dict:
     result = _packs.disable(packs)
-    await _apply_session_visibility(ctx)
+    if result["disabled"]:
+        await _packgate.announce_list_changed(ctx)
     return result
 
 
@@ -1876,7 +1868,8 @@ disable_tools = _tool("lite")(disable_tools)
 
 
 def _startup_disabled_names() -> set[str]:
-    """Tool names hidden at startup under current packs bookkeeping."""
+    """Tool names off in the process default record (the startup surface
+    once main() has applied it)."""
     return {
         name
         for members in _packs.tool_names().values()
@@ -1901,11 +1894,12 @@ def _bad_mode_message() -> str:
 
 
 def main() -> None:
-    # KS4XL_MODE startup surface: bookkeeping first (a typo in the env fails
-    # loudly BEFORE serving), then ONE global visibility transform hiding
-    # every tool not enabled at startup. Session rules laid down by
-    # enable_tools/disable_tools override this transform. Applied here, not
-    # at import, so tests and measure_surface always see the full registry.
+    # KS4XL_MODE startup surface, applied to the process default record that
+    # every session starts from (a typo in the env fails loudly BEFORE
+    # serving). What each session then lists and may call is derived from
+    # its own record by the session pack gate; no visibility transform is
+    # added (punch-list #933). Applied here, not at import, so tests and
+    # measure_surface always see the full registry.
     # A typo used to exit with a twelve-line traceback wrapping a genuinely
     # good message, which Desktop renders as "server failed to start" with
     # the useful sentence buried under a file path the user does not
@@ -1918,10 +1912,6 @@ def main() -> None:
     except _XlMcpError:
         _sys.stderr.write(_bad_mode_message() + "\n")
         raise SystemExit(2)
-    _PENDING_VISIBILITY.clear()  # startup flips ride the global transform
-    disabled = _startup_disabled_names()
-    if disabled:
-        mcp.add_transform(_Visibility(False, names=disabled))
     # No update check here. It runs ON DEMAND, inside get_server_info, and
     # nowhere else: startup starts no thread and asks PyPI nothing.
     # The one-time star nudge, last, after startup has already succeeded.

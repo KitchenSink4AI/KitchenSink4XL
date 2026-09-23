@@ -40,7 +40,6 @@ def restore_enabled():
     yield
     packs._ENABLED.clear()
     packs._ENABLED.update(saved)
-    server._PENDING_VISIBILITY.clear()
 
 
 def _reset_to_lite():
@@ -119,14 +118,35 @@ def test_no_op_prefix_does_not_claim_a_notification(restore_enabled):
 
 
 def test_no_op_really_emits_nothing(restore_enabled):
-    """The claim behind the prefix, proven rather than assumed: _sync gates on
-    a non-empty name set, so the no-op never reaches the visibility hook and
-    nothing is queued for the session."""
+    """The claim behind the prefix, proven rather than assumed, over a real
+    session: the first enable sends one tools/list_changed and the no-op
+    re-enable sends none. (Since punch-list #933 enable_tools sends the
+    notification itself, only when a tool flipped; there is no visibility
+    hook or queue any more.)"""
+    import asyncio
+
+    from fastmcp import Client
+
     _reset_to_lite()
-    packs.enable(["design"])
-    server._PENDING_VISIBILITY.clear()
-    packs.enable(["design"])
-    assert server._PENDING_VISIBILITY == []
+    seen: list[int] = []
+
+    async def handler(message):
+        root = getattr(message, "root", message)
+        if getattr(root, "method", "") == "notifications/tools/list_changed":
+            seen.append(1)
+
+    async def run():
+        async with Client(server.mcp, message_handler=handler) as c:
+            await c.call_tool("enable_tools", {"packs": ["design"]})
+            await asyncio.sleep(0.2)
+            first = len(seen)
+            await c.call_tool("enable_tools", {"packs": ["design"]})
+            await asyncio.sleep(0.2)
+            return first, len(seen)
+
+    first, total = asyncio.run(run())
+    assert first == 1
+    assert total == 1
 
 
 def test_note_rides_a_mixed_call(restore_enabled):

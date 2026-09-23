@@ -6,8 +6,10 @@ proven in production). Adapted to the grid domain per DESIGN Section 7: the
 CODE_MAP and CLOSED_CODES vocabulary is extended with the grid additions
 (WORKBOOK_LOCKED rename, HAZARD_REFUSED, FORMULA_REJECTED, CALC_UNAVAILABLE)
 and the Word-only PROTECTED_VIEW code is dropped (Excel has no Protected View
-edit gate in this surface). The RefusalResult / hint_tools / DisabledToolSignpost
-machinery is unchanged.
+edit gate in this surface). The RefusalResult / hint_tools machinery is
+unchanged. The disabled-tool signpost moved into packs.PackOff, refused by
+the session pack gate (packgate.py, punch-list #933); UnknownToolEnvelope
+keeps the envelope for a name no pack registers.
 
 Contract:
 - Refusals are structured: {ok: false, error: {code, message, hint}} with a
@@ -240,6 +242,17 @@ def _safe_message(text: str) -> str:
     return _CTRL.sub(lambda m: f"<U+{ord(m.group(0)):04X}>", text)
 
 
+def _declared_hint(exc: BaseException) -> str | None:
+    """A remedy the raise site states for itself, which beats the blanket
+    per-code entry in HINTS (ported from KitchenSink4PPT, which found the
+    need first). packs.PackOff uses it: the fix for a tool whose pack is off
+    is the enable_tools call, not the per-code advice for a missing cell.
+    A raise site that knows better says so through exc.hint, the same way
+    it declares exc.hint_tools."""
+    hint = getattr(exc, "hint", None)
+    return hint if isinstance(hint, str) and hint.strip() else None
+
+
 def _declared_code(exc: BaseException) -> str | None:
     """A raise-site code override, but only when it is one of OUR closed
     codes. xml.etree's ParseError carries an expat `.code` INTEGER, which
@@ -280,7 +293,7 @@ def refusal(exc: BaseException) -> dict:
                 "probably has the wrong shape (list where a dict belongs, or "
                 "vice versa)"
             )
-    hint = HINTS.get(code, "")
+    hint = _declared_hint(exc) or HINTS.get(code, "")
     if isinstance(exc, (_err.WorkbookCorrupt, zipfile.BadZipFile)):
         hint = f"{hint} {RECOVERY_HINT}".strip()
     ph = pack_hint(exc)
@@ -406,32 +419,23 @@ def _text_of(result) -> str:
         return ""
 
 
-class DisabledToolSignpost(_FmcpMiddleware):
-    """Discoverability rule 2 at the transport layer: a tools/call to a
-    registered but currently disabled tool must name the owning pack and
-    the exact enable_tools call, not dead-end with a bare "Unknown tool".
+class UnknownToolEnvelope(_FmcpMiddleware):
+    """A tools/call to a name this server does not register returns the
+    Section 7 envelope (RefusalResult with isError=true) rather than a raw
+    fastmcp error: the old raise produced text with no {ok, error: {code,
+    message, hint}} shape, the one refusal class outside the error contract
+    (fresh-eyes round, L-2).
 
-    Both refusals return the Section 7 envelope (RefusalResult with
-    isError=true) rather than raising a raw fastmcp ToolError: the old
-    raise produced excellent TEXT with no {ok, error: {code, message,
-    hint}} shape, the one refusal class outside the error contract
-    (fresh-eyes round, L-2)."""
+    This was DisabledToolSignpost. Its other half, a call to a registered
+    tool whose pack is off, is now refused before fastmcp looks the tool up,
+    by the session pack gate (packgate.py) with packs.PackOff, in the same
+    words and the same envelope (punch-list #933)."""
 
     async def on_call_tool(self, context, call_next):
         try:
             return await call_next(context)
         except _FmcpNotFound:
             name = getattr(context.message, "name", "")
-            pack = _packs.pack_of(name)
-            if pack and pack != "lite" and not _packs.is_tool_enabled(name):
-                err = _err.TargetNotFound(
-                    f"tool {name!r} exists but is currently disabled: it "
-                    f"belongs to the {pack!r} pack.")
-                payload = refusal(err)
-                payload["error"]["hint"] = (
-                    f"call enable_tools(packs=['{pack}']) to turn it on, "
-                    "then retry this call")
-                return RefusalResult(payload)
             err = _err.TargetNotFound(
                 f"no tool named {name!r} on this server.")
             payload = refusal(err)
