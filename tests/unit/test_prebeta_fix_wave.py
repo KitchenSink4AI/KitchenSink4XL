@@ -733,25 +733,18 @@ class TestGatedRefusalEnvelope:
         import asyncio
         from fastmcp import Client
         from fastmcp.exceptions import ToolError
-        from fastmcp.server.transforms.visibility import Visibility
         from xlsx_mcp import server
 
         async def run():
-            transform = Visibility(
-                False, names=server._startup_disabled_names())
-            server.mcp.add_transform(transform)
             out = {}
-            try:
-                async with Client(server.mcp) as c:
-                    with pytest.raises(ToolError) as e1:
-                        await c.call_tool("manage_chart", {
-                            "path": "x.xlsx", "action": "list"})
-                    out["disabled"] = str(e1.value)
-                    with pytest.raises(ToolError) as e2:
-                        await c.call_tool("no_such_tool_xyz", {})
-                    out["unknown"] = str(e2.value)
-            finally:
-                server.mcp._transforms.remove(transform)
+            async with Client(server.mcp) as c:
+                with pytest.raises(ToolError) as e1:
+                    await c.call_tool("manage_chart", {
+                        "path": "x.xlsx", "action": "list"})
+                out["disabled"] = str(e1.value)
+                with pytest.raises(ToolError) as e2:
+                    await c.call_tool("no_such_tool_xyz", {})
+                out["unknown"] = str(e2.value)
             return out
 
         out = asyncio.run(run())

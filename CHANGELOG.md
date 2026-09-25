@@ -1,5 +1,8 @@
 # Changelog
 
+### Unreleased
+- [[COPY: changelog-933. Customer-facing wording for Codex; facts only, and no administrator-control or security claim. (1) Fixed: an enabled pack's tools no longer drop out of a conversation a day after the pack was switched on. In releases before this fix (verified on 1.2.4 and 1.2.5), 24 hours after enable_tools the pack's tools left the tool list, calls to them failed as unknown tools, and enable_tools answered that the pack was already enabled without bringing them back. (2) Packs are kept per conversation (per MCP session): enabling or disabling a pack in one conversation no longer changes what another conversation on the same server process sees or what its get_server_info reports, and a second conversation's enable_tools really enables the pack for itself. stdio clients (Claude Desktop, Claude Code, Codex) run one conversation per server process, so what one conversation sees is otherwise unchanged. (3) enable_tools and disable_tools now send only tools/list_changed; they no longer also send resources/list_changed and prompts/list_changed (this server has no resources or prompts).]]
+
 ### 1.2.5
 - `enable_tools` now says what to do when a client fixed its tool list at startup. Put a comma list of packs in `KS4XL_MODE`, restart the app or session, and then start a new worker. Claude Code can instead enable packs in its main session before it starts workers. A locked policy still caps the surface.
 
