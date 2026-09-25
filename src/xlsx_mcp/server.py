@@ -292,6 +292,7 @@ def get_server_info() -> dict:
         "version": __version__,
         "phase": "6 (consolidated: pack re-cut, anchors, tiered loading)",
         "surface": _packs.surface_report(),
+        "saved_packs": _packs.saved_packs_report(),
         "packs_available": _packs.pack_names(),
         "platform": _platform.platform(),
         "python": _sys.version.split()[0],
