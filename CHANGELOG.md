@@ -1,5 +1,8 @@
 # Changelog
 
+### 1.2.5
+- `enable_tools` now says what to do when a client fixed its tool list at startup. Put a comma list of packs in `KS4XL_MODE`, restart the app or session, and then start a new worker. Claude Code can instead enable packs in its main session before it starts workers. A locked policy still caps the surface.
+
 ### 1.2.4
 - Documentation and listing only. The MCP Registry entry moves to the io.github.KitchenSink4AI namespace and is published from the release workflow. The bundle manifest carries contact details. No change to tools or behaviour.
 

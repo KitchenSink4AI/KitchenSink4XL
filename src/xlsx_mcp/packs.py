@@ -63,6 +63,67 @@ PACK_SUMMARIES: dict[str, str] = {
 }
 EVERYTHING = "everything"
 
+#: Returned as `note` by EVERY successful enable(), including one that
+#: enabled nothing new.
+#:
+#: The old sentence ("re-fetch the tool list if your client does not refresh
+#: automatically") assumed the client could re-fetch. Several cannot: Claude
+#: Code workers and Codex CLI fix their tool list when the session or worker
+#: starts, so a pack enabled afterwards never becomes callable there and the
+#: agent retries enable_tools forever against a surface that already says the
+#: pack is on. That is why the note also rides the no-op re-enable: the second
+#: call is exactly where a stuck agent lands, and it is the call that used to
+#: come back with no note at all. The route out is KS4XL_MODE at launch, which
+#: is why the note names it instead of promising a refresh.
+#:
+#: The note is PREFIX + BODY, because only the body is true unconditionally.
+#:
+#: A no-op re-enable sends NO notification: _sync() below gates on a non-empty
+#: name set, so the visibility hook never fires and no
+#: ToolListChangedNotification reaches the session. Telling the caller
+#: "tools/list_changed was sent" on that call was a plain falsehood, and the
+#: worst possible one here: an agent debugging a tool it cannot see would go
+#: looking for a notification that was never emitted.
+LIST_CHANGED_PREFIX = "tools/list_changed was sent."
+
+#: The honest prefix for the call where nothing changed state.
+NO_LIST_CHANGE_PREFIX = (
+    "These packs were already on, so no list change was sent."
+)
+
+#: The advice, identical either way. The launch-env route LEADS because it is
+#: the one proven to work in every client, workers included. The orchestrator
+#: route comes second and is labelled for the client it works in: in Codex CLI
+#: a pack the parent enables never reaches a worker at all, so offering it
+#: first would send most readers down a path that cannot help them.
+CLIENT_NOTE_BODY = (
+    "If the new tools are not in your tool list, this client fixed its list "
+    "when the session or worker started: do not retry here. What works in "
+    "every client: ask the user to add the packs to KS4XL_MODE (comma list) "
+    "in this server's launch settings, restart the app or session, then "
+    "start a new worker if needed. Claude Code only: the orchestrator can "
+    "instead call enable_tools in the main session and then start a new "
+    "worker. If enable_tools refuses a pack, an administrator locked the "
+    "tool set: do not retry."
+)
+
+
+def client_note(list_changed: bool) -> str:
+    """The enable() note. `list_changed` is whether a notification really
+    went out, not whether the caller asked for one."""
+    prefix = LIST_CHANGED_PREFIX if list_changed else NO_LIST_CHANGE_PREFIX
+    return f"{prefix} {CLIENT_NOTE_BODY}"
+
+#: The same fact, stated once where a client reads it before it calls
+#: anything: the server instructions (one handshake) and the get_workflows
+#: index. Single-sourced here so the two copies cannot drift.
+WORKER_SURFACE_NOTE = (
+    "Workers and subagents only see the tools that were on when they "
+    "started: start the server with KS4XL_MODE set to a comma list of "
+    "packs, or, in Claude Code, enable packs in the main session before "
+    "starting workers."
+)
+
 # pack -> {tool_name: fastmcp Tool}; "lite" holds the always-on core.
 _REGISTRY: dict[str, dict[str, object]] = {"lite": {}}
 
@@ -254,18 +315,15 @@ def enable(packs: list[str]) -> dict:
                 newly = True
         (enabled_now if newly else already).append(pack)
     _sync(flipped, True)
-    result = {
+    return {
         "enabled": enabled_now,
         "already_enabled": already,
         "approx_tokens_added": tokens_added,
         **surface_report(),
+        # `flipped` is exactly what _sync gates on, so the prefix tracks the
+        # real emission rather than the caller's intent.
+        "note": client_note(bool(flipped)),
     }
-    if enabled_now:
-        result["note"] = (
-            "tools/list_changed was sent; re-fetch the tool list if your "
-            "client does not refresh automatically"
-        )
-    return result
 
 
 def disable(packs: list[str]) -> dict:
