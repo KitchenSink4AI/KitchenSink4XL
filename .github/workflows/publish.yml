@@ -1,6 +1,7 @@
 name: Publish to PyPI
 
-# A published GitHub Release is the only trigger. To retry a failed publish,
+# A published GitHub Release is the only trigger, and the pypi environment
+# requires approval before anything is uploaded. To retry a failed publish,
 # re-run this workflow from its own Actions run.
 on:
   release:
