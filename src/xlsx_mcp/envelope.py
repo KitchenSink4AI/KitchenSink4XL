@@ -76,7 +76,7 @@ CODE_MAP: tuple[tuple[type[BaseException], str], ...] = (
     # openpyxl's own refusal for text Excel cannot store (control characters
     # in a cell value). The ops layer refuses these first with a better
     # message (core.limits.check_text_storable); this is the backstop for any
-    # path it does not cover. Without it the error escaped the
+    # path it does not cover. Without it the error escaped the Section 7
     # envelope entirely: no structuredContent, no code, a full Rich traceback
     # on stderr, and the raw control bytes echoed back.
     (_IllegalCharacterError, "BAD_PARAMS"),
@@ -89,7 +89,7 @@ CODE_MAP: tuple[tuple[type[BaseException], str], ...] = (
     # Exception subclass, so nothing else catches it). The OLE sniff at the
     # entry points refuses legacy .xls with a better message before openpyxl
     # ever sees one; this is the backstop for any unsniffed path, so a
-    # genuine .xls can never escape the envelope again as a raw
+    # genuine .xls can never escape the Section 7 envelope again as a raw
     # Rich traceback recommending xlrd.
     (_InvalidFileException, "UNSUPPORTED_CONTENT"),
     # PermissionError is the file-held-open signal on Windows (and what a
@@ -283,7 +283,7 @@ def refusal(exc: BaseException) -> dict:
     if ph:
         hint = f"{hint} {ph}".strip()
     error: dict[str, Any] = {"code": code, "message": message, "hint": hint}
-    # Ambiguity refusals from the locate resolver carry every
+    # Ambiguity refusals from the locate resolver (Section 5.2) carry every
     # match on the exception; surface them per the declared refusal shape.
     matches = getattr(exc, "matches", None)
     if matches:
@@ -352,7 +352,7 @@ def _is_schema_error(text: str) -> bool:
 
 
 class InputValidationEnvelope(_FmcpMiddleware):
-    """Turn fastmcp's own argument-validation failures into the
+    """Turn fastmcp's own argument-validation failures into the Section 7
     refusal shape, so EVERY refusal a caller can provoke carries a closed
     code and a usable hint. The pydantic detail is kept verbatim in the
     message (it names the offending field precisely); only the shape
@@ -407,7 +407,7 @@ class DisabledToolSignpost(_FmcpMiddleware):
     registered but currently disabled tool must name the owning pack and
     the exact enable_tools call, not dead-end with a bare "Unknown tool".
 
-    Both refusals return the envelope (RefusalResult with
+    Both refusals return the Section 7 envelope (RefusalResult with
     isError=true) rather than raising a raw fastmcp ToolError: the old
     raise produced excellent TEXT with no {ok, error: {code, message,
     hint}} shape, the one refusal class outside the error contract

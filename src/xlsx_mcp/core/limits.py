@@ -77,7 +77,7 @@ MAX_CELL_CHARS = 32_767
 
 #: Characters openpyxl itself refuses to serialize (and Excel cannot store):
 #: the C0 controls except tab, newline and carriage return. Without this check
-#: openpyxl's IllegalCharacterError escaped the envelope entirely
+#: openpyxl's IllegalCharacterError escaped the Section 7 envelope entirely
 #: and echoed the raw control bytes back to the caller.
 _ILLEGAL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 

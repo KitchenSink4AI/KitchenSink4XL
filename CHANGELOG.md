@@ -1,5 +1,11 @@
 # Changelog
 
+### 1.2.6
+A maintenance release. It updates the documentation, the test fixtures and the package metadata, which now lists KitchenSink4AI as the author. Two small report changes:
+
+- `get_server_info` no longer reports an internal build-phase field.
+- `measured_against` in the limits report now reads `Excel`.
+
 ### 1.2.5
 - `enable_tools` now says what to do when a client fixed its tool list at startup. Put a comma list of packs in `KS4XL_MODE`, restart the app or session, and then start a new worker. Claude Code can instead enable packs in its main session before it starts workers. A locked policy still caps the surface.
 

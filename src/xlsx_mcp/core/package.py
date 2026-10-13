@@ -65,7 +65,7 @@ from .sandbox import check_path
 
 
 # --------------------------------------------------- unwritable-target copy
-# Two different situations produced one message for the life of 1.0.
+# Two different situations get two different messages.
 
 
 def held_refusal(path: str) -> str:
@@ -262,7 +262,7 @@ class WorkbookPackage:
             return
         # Control characters, lone surrogates, and text past Excel's cell
         # ceiling: refuse in-envelope here rather than let openpyxl's
-        # IllegalCharacterError escape the shape (and rather than
+        # IllegalCharacterError escape the Section 7 shape (and rather than
         # accept a value the reply cannot encode, or one that only the
         # post-write verify would notice).
         _limits.check_cell_text(value, what=f"the value for {coord}")

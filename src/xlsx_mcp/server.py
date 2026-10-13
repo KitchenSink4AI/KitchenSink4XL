@@ -147,7 +147,7 @@ _COMPACT = (",", ":")
 
 
 class _SuccessEnvelope(_FmcpMiddleware):
-    """Success fields at the MCP boundary: object results gain
+    """Section 7.1 success fields at the MCP boundary: object results gain
     ok (and file, when the call named one). In-process calls bypass this
     entirely (module attributes are the raw functions), so the test suite
     keeps direct returns."""
@@ -270,7 +270,7 @@ def get_server_info() -> dict:
         "homepage": "https://kitchensink4.ai/KitchenSink4XL/",
         "family": ["kitchensink4word", "kitchensink4ppt", "kitchensink4web"],
         "version": __version__,
-        "phase": "6 (consolidated: pack re-cut, anchors, tiered loading)",
+
         "surface": _packs.surface_report(),
         "packs_available": _packs.pack_names(),
         "platform": _platform.platform(),
@@ -1780,7 +1780,7 @@ def com_status() -> dict:
     return _comtier.com_status()
 
 
-# ------------------------------------------------ tiered loading
+# ------------------------------------------------ tiered loading (Section 9)
 # Registered LAST: enable_tools' docstring carries the pack menu with
 # per-pack token bills computed from the live registry, so every other tool
 # must already be registered when this block runs.
