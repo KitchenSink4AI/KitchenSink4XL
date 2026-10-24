@@ -79,6 +79,12 @@ jobs:
         if: github.repository == 'KitchenSink4AI/KitchenSink4XL'
         shell: bash
         run: python scripts/adapter_source.py --public-pin >> "$GITHUB_OUTPUT"
+      # The digest is over the adapter's exact bytes, and the Windows runner's git turns LF
+      # into CRLF on checkout by default, so the pinned checkout keeps line endings as committed.
+      - name: Keep line endings as committed for the adapter checkout
+        if: github.repository == 'KitchenSink4AI/KitchenSink4XL'
+        shell: bash
+        run: git config --global core.autocrlf false
       - name: Community license adapter (pinned public commit)
         if: github.repository == 'KitchenSink4AI/KitchenSink4XL'
         uses: actions/checkout@v7
