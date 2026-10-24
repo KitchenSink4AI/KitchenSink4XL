@@ -31,7 +31,7 @@ from openpyxl.utils import get_column_letter
 
 from ..core import limits as _limits
 from ..core import safesave as _safesave
-from ..core.errors import RangeOutOfBounds, XlMcpError
+from ..core.errors import CeilingExceeded, RangeOutOfBounds, XlMcpError
 from ..core.outguard import guard_out_dir, guard_out_file
 from ..core.package import WorkbookPackage
 from ..core.sandbox import check_path
@@ -40,6 +40,31 @@ from . import gridio
 _FORMATS = ("auto", "csv", "tsv", "json")
 _EXPORT_FORMATS = ("csv", "tsv", "json")
 _INJECTION = ("=", "+", "-", "@")
+
+
+#: Byte-order marks, longest first (a UTF-32 mark starts like a UTF-16 one).
+_BOMS = ((b"\xff\xfe\x00\x00", "utf-32"), (b"\x00\x00\xfe\xff", "utf-32"),
+         (b"\xef\xbb\xbf", "utf-8-sig"), (b"\xff\xfe", "utf-16"),
+         (b"\xfe\xff", "utf-16"))
+
+
+def _decode_text_file(raw: bytes, encoding: str) -> tuple[str, str]:
+    """(the file's text, the codec used). A byte-order mark decides: Excel's
+    "Unicode Text" is UTF-16 with one, and "CSV UTF-8" carries the UTF-8
+    mark. Without one the caller's encoding is used (utf-8 as utf-8-sig), and
+    bytes that are not in it refuse in plain words, naming what to pass."""
+    for mark, codec in _BOMS:
+        if raw.startswith(mark):
+            return raw.decode(codec), codec  # the codec drops the mark
+    enc = "utf-8-sig" if _codecs.lookup(encoding).name == "utf-8" else encoding
+    try:
+        return raw.decode(enc), _codecs.lookup(encoding).name
+    except UnicodeDecodeError as exc:
+        raise XlMcpError(
+            f"the file is not {encoding} text: byte 0x{raw[exc.start]:02x} at "
+            f"position {exc.start:,} is not valid {encoding}. Pass the "
+            "file's encoding, for example encoding='cp1252' (Windows "
+            "Western), 'latin-1' or 'utf-16'") from None
 
 
 def _detect_format(fmt: str, source_file: str | None) -> str:
@@ -54,8 +79,33 @@ def _detect_format(fmt: str, source_file: str | None) -> str:
     return "csv"
 
 
+_SNIFF_DELIMITERS = (",", ";", "\t", "|")
+
+
+def _sniff_delimiter(text: str) -> str:
+    """The delimiter a CSV's own lines use. A semicolon
+    file (the usual European export, with decimal commas) was split on its
+    decimal commas and returned ok. The delimiter that appears the same
+    number of times (at least once) on the first lines wins; a comma wins a
+    tie, as before."""
+    lines = [ln for ln in text.splitlines()[:20] if ln.strip()][:10]
+    if not lines:
+        return ","
+    best, best_n = ",", 0
+    for d in _SNIFF_DELIMITERS:
+        counts = []
+        for ln in lines:
+            try:
+                counts.append(len(next(_csv.reader([ln], delimiter=d))) - 1)
+            except (_csv.Error, StopIteration):
+                counts.append(0)
+        if counts and min(counts) > 0 and len(set(counts)) == 1 and counts[0] > best_n:
+            best, best_n = d, counts[0]
+    return best
+
+
 def _parse(text: str, fmt: str, delimiter: str | None,
-           header: bool) -> list[list[Any]]:
+           header: bool, coerce: bool = True) -> list[list[Any]]:
     if fmt == "json":
         obj = _json.loads(text)
         if isinstance(obj, dict):
@@ -73,7 +123,20 @@ def _parse(text: str, fmt: str, delimiter: str | None,
         return [list(r) if isinstance(r, list) else [r] for r in obj]
     delim = delimiter or ("\t" if fmt == "tsv" else ",")
     reader = _csv.reader(_io.StringIO(text), delimiter=delim)
-    return [[_coerce(v) for v in row] for row in reader]
+    try:
+        if not coerce:
+            return [list(row) for row in reader]
+        return [[_coerce(v) for v in row] for row in reader]
+    except _csv.Error as exc:
+        # The text is the caller's argument, so a CSV the
+        # reader cannot take is a refusal of that argument, not a server
+        # fault (it used to reach INTERNAL_ERROR, "the arguments are not the
+        # cause"). The usual case is one field over the reader's 131,072-
+        # character limit; an Excel cell holds at most 32,767.
+        raise XlMcpError(
+            f"the {fmt.upper()} data could not be read at line {reader.line_num}: {exc}. "
+            "A single field may not exceed 131,072 characters here, and an Excel "
+            "cell holds at most 32,767.") from None
 
 
 def _coerce(v: str) -> Any:
@@ -92,11 +155,135 @@ def _coerce(v: str) -> Any:
     return f
 
 
+# ------------------------------------------------- import typing
+
+#: A value that LOOKS like a number but is a code Excel's own text import
+#: would keep whole: a leading zero (000123, ZIP 02134), E-notation text
+#: (1E5, a part number), or more digits than a double holds (an 18-digit
+#: ID). One such value makes its whole column text, so a column never
+#: mixes 02134 (text) with 10001 (number).
+_LEADING_ZERO = re.compile(r"[+-]?0\d+(\.\d+)?")
+_E_NOTATION = re.compile(r"[+-]?\d+(\.\d+)?[eE][+-]?\d+")
+_THOUSANDS = re.compile(r"[+-]?\d{1,3}(,\d{3})+(\.\d+)?")
+_THOUSANDS_DC = re.compile(r"[+-]?\d{1,3}(\.\d{3})+(,\d+)?")
+_DECIMAL_COMMA = re.compile(r"[+-]?\d+,\d+")
+COLUMN_TYPES = ("auto", "text", "number", "date")
+
+
+def _code_reason(v: str) -> str | None:
+    t = v.strip()
+    if _LEADING_ZERO.fullmatch(t):
+        return "a leading zero"
+    if _E_NOTATION.fullmatch(t):
+        return "E-notation text"
+    digits = sum(ch.isdigit() for ch in t)
+    if digits > 15 and re.fullmatch(r"[+-]?[\d.,]+", t):
+        return "more than 15 digits"
+    return None
+
+
+def _number(v: str, decimal_comma: bool):
+    """A CSV field as a number, Excel's way, or the text unchanged."""
+    t = v.strip()
+    if decimal_comma:
+        if _THOUSANDS_DC.fullmatch(t) or _DECIMAL_COMMA.fullmatch(t):
+            t = t.replace(".", "").replace(",", ".")
+    elif _THOUSANDS.fullmatch(t):
+        t = t.replace(",", "")
+    out = _coerce(t)
+    return out if not isinstance(out, str) else v
+
+
+def _column_key(key, names: list[str]) -> int:
+    """A column_types key (header name, letter, or 1-based number) as an
+    index into the imported columns."""
+    if isinstance(key, int) or (isinstance(key, str) and key.isdigit()):
+        i = int(key) - 1
+        if 0 <= i < len(names):
+            return i
+    elif isinstance(key, str):
+        for i, n in enumerate(names):
+            if n == key:
+                return i
+        from openpyxl.utils import column_index_from_string
+        try:
+            i = column_index_from_string(key.upper()) - 1
+        except ValueError:
+            i = -1
+        if 0 <= i < len(names):
+            return i
+    raise XlMcpError(
+        f"column_types names {key!r}, which is not one of the imported columns "
+        f"({', '.join(names)}); use a header, a letter or a 1-based number")
+
+
+def _type_columns(matrix: list[list[Any]], header: bool, column_types: dict | None,
+                  parse_dates: bool, decimal_comma: bool) -> tuple[list[list[Any]], dict]:
+    """Decide each column's type and convert the raw CSV text."""
+    from openpyxl.utils import get_column_letter
+    from ..core.package import parse_iso_date
+
+    ncols = max((len(r) for r in matrix), default=0)
+    first = 1 if header and matrix else 0
+    names = [(str(matrix[0][i]) if header and matrix and i < len(matrix[0])
+              and matrix[0][i] not in (None, "") else get_column_letter(i + 1))
+             for i in range(ncols)]
+    wanted: dict[int, str] = {}
+    for key, kind in (column_types or {}).items():
+        k = _vocab_fold(kind)
+        if k not in COLUMN_TYPES:
+            raise XlMcpError(f"column_types values are {', '.join(COLUMN_TYPES)}; got {kind!r}")
+        wanted[_column_key(key, names)] = k
+    report: dict = {}
+    as_text, dates, not_numbers, not_dates = [], [], [], []
+    for c in range(ncols):
+        cells = [(r, row[c]) for r, row in enumerate(matrix[first:], first)
+                 if c < len(row) and isinstance(row[c], str) and row[c] != ""]
+        kind = wanted.get(c, "auto")
+        if kind == "auto":
+            reasons = [(v, _code_reason(v)) for _r, v in cells]
+            hit = next(((v, why) for v, why in reasons if why), None)
+            if hit:
+                kind = "text"
+                as_text.append({"column": names[c], "reason": hit[1], "example": hit[0]})
+            elif parse_dates and cells and all(parse_iso_date(v) is not None for _r, v in cells):
+                kind = "date"
+        for r, v in cells:
+            if kind == "text":
+                matrix[r][c] = v
+            elif kind == "date":
+                if parse_iso_date(v) is not None:
+                    matrix[r][c] = {"date": v}
+                else:
+                    not_dates.append(f"{get_column_letter(c + 1)}{r + 1}")
+            else:
+                out = _number(v, decimal_comma)
+                if kind == "number" and isinstance(out, str):
+                    not_numbers.append(f"{get_column_letter(c + 1)}{r + 1}")
+                matrix[r][c] = out
+        if kind == "date" and cells:
+            dates.append(names[c])
+    if as_text:
+        report["columns_kept_as_text"] = as_text
+    if dates:
+        report["date_columns"] = dates
+    if not_numbers:
+        report["not_numbers"] = not_numbers[:10]
+    if not_dates:
+        report["not_dates"] = not_dates[:10]
+    return matrix, report
+
+
+def _vocab_fold(v) -> str:
+    return re.sub(r"[\s_\-]+", "", str(v)).lower()
+
+
 def import_data(path: str, source: str | None = None,
                 source_file: str | None = None, fmt: str = "auto",
                 location: Any = None, sheet: str | None = None,
                 header: bool = True, delimiter: str | None = None,
                 encoding: str = "utf-8", formulas: bool = False,
+                column_types: dict | None = None, parse_dates: bool = False,
                 allow_loss: bool = False, backup: bool = True,
                 verify_com: bool | None = None) -> dict:
     """Import CSV / TSV / JSON into a sheet at an anchor. Backup + verify."""
@@ -116,22 +303,43 @@ def import_data(path: str, source: str | None = None,
             f"unknown encoding {encoding!r}; encoding must name a codec "
             "Python knows, for example utf-8, utf-8-sig, cp1252, or "
             "latin-1") from None
+    info: dict = {}
     if source_file:
         sp = check_path(source_file, "read import file")
-        with open(sp, encoding=encoding) as fh:
-            text = fh.read()
+        with open(sp, "rb") as fh:
+            raw = fh.read()
+        text, used = _decode_text_file(raw, encoding)
+        asked = _codecs.lookup(encoding).name
+        if used != asked and not (used == "utf-8-sig" and asked == "utf-8"):
+            info["encoding"] = (f"{used} (the file starts with its "
+                                "byte-order mark)")
     else:
         text = source
+    if text.startswith("\ufeff"):
+        text = text[1:]  # A byte-order mark is not data
     fmt = _detect_format(fmt, source_file)
-    matrix = _parse(text, fmt, delimiter, header)
+    if fmt == "json":
+        matrix = _parse(text, fmt, delimiter, header)
+    else:
+        if delimiter is None and fmt == "csv":
+            delimiter = _sniff_delimiter(text)
+            if delimiter != ",":
+                info["delimiter"] = delimiter
+        decimal_comma = (delimiter == ";")
+        if decimal_comma:
+            info["decimal_comma"] = True
+        matrix = _parse(text, fmt, delimiter, header, coerce=False)
+        matrix, typing = _type_columns(matrix, header, column_types, parse_dates,
+                                       decimal_comma)
+        info.update(typing)
     rows = len(matrix)
     ncols = max((len(r) for r in matrix), default=0)
     if rows == 0 or ncols == 0:
         raise XlMcpError("the import produced no cells")
-    if rows * ncols > gridio.MAX_READ_CELLS:
-        raise RangeOutOfBounds(
+    if rows * ncols > gridio.MAX_WRITE_CELLS:
+        raise CeilingExceeded(
             f"the import is {rows * ncols:,} cells, over the "
-            f"{gridio.MAX_READ_CELLS:,}-cell write ceiling; split the source")
+            f"{gridio.MAX_WRITE_CELLS:,}-cell write ceiling; split the source")
 
     pkg = WorkbookPackage.open(path)
     grid = pkg.resolve(location if location is not None else {"cell": "A1"},
@@ -151,6 +359,7 @@ def import_data(path: str, source: str | None = None,
                 cell = ws.cell(r, c)
                 cell.value = val
                 cell.data_type = "s"
+                cell.quotePrefix = True  # stays text if edited in Excel
                 neutralized += 1
                 pkg._intended[(grid.sheet, gridio.a1(r, c))] = ("value", val)
             else:
@@ -158,8 +367,8 @@ def import_data(path: str, source: str | None = None,
     result = pkg.save(allow_loss=allow_loss, backup=backup,
                       verify_com=verify_com)
     result["changed"]["imported"] = {
-        "sheet": grid.sheet, "anchor": gridio.a1(top, left),
-        "rows": rows, "cols": ncols, "format": fmt}
+        "sheet": grid.sheet, "top_left": gridio.a1(top, left),
+        "rows": rows, "cols": ncols, "format": fmt, **info}
     warnings = list(result.get("warnings", []))
     if neutralized:
         warnings.append(
@@ -170,10 +379,28 @@ def import_data(path: str, source: str | None = None,
     return result
 
 
+def _csv_cell(v):
+    """A CSV/TSV field the way Excel writes one: TRUE and
+    FALSE, numbers in General form (0.00001, not 1e-05), empty for nothing."""
+    from ..core import numfmt as _numfmt
+    if v is None:
+        return ""
+    if isinstance(v, (bool, int, float)):
+        return _numfmt.general(v)
+    return v
+
+
+def _text_encoding(fmt: str, bom: bool) -> str:
+    """A CSV or TSV file starts with a UTF-8 byte-order mark by
+    default, as Excel's own "CSV UTF-8" does, so Excel opens accented text
+    as written instead of as mojibake; bom=false leaves it out."""
+    return "utf-8-sig" if bom and fmt in ("csv", "tsv") else "utf-8"
+
+
 def export_range(path: str, location: Any = None, sheet: str | None = None,
                  fmt: str = "csv", header: bool = True, values: str = "cached",
                  records: bool = False, out_file: str | None = None,
-                 overwrite: bool = False) -> dict:
+                 overwrite: bool = False, bom: bool = True) -> dict:
     """Export a range / table / sheet to CSV / TSV / JSON. Read-only of the
     WORKBOOK; out_file is guarded by core.outguard (never the source
     workbook, never a workbook extension, never inside the backup store,
@@ -190,7 +417,7 @@ def export_range(path: str, location: Any = None, sheet: str | None = None,
     formula_wb = gridio.open_wb(path, data_only=False) \
         if values in ("formula", "both") else None
     cached_wb = gridio.open_wb(path, data_only=True) \
-        if values in ("cached", "both") else None
+        if values in gridio.CACHED_MODES else None
     base = formula_wb if formula_wb is not None else cached_wb
     try:
         loc = location if location is not None else {
@@ -201,9 +428,11 @@ def export_range(path: str, location: Any = None, sheet: str | None = None,
             return {"sheet": grid.sheet, "range": grid.a1, "format": fmt,
                     "rows": 0, "content": content, "value_mode": values}
         gridio.guard_cell_count(grid)
+        shown = gridio.DisplayNotes(gridio.is_1904(base[grid.sheet]), path) \
+            if values == "displayed" else None
         vals, labels, _hf = gridio.read_matrix(
             grid, mode=values, formula_wb=formula_wb, cached_wb=cached_wb,
-            path=path)
+            path=path, display_notes=shown)
         vals = [[gridio.compact_value(v) for v in row] for row in vals]
         if fmt == "json":
             if header and vals:
@@ -221,7 +450,7 @@ def export_range(path: str, location: Any = None, sheet: str | None = None,
             buf = _io.StringIO()
             writer = _csv.writer(buf, delimiter=delim, lineterminator="\n")
             for row in vals:
-                writer.writerow(["" if v is None else v for v in row])
+                writer.writerow([_csv_cell(v) for v in row])
             content = buf.getvalue()
         out: dict[str, Any] = {
             "sheet": grid.sheet, "range": grid.a1, "format": fmt,
@@ -237,11 +466,22 @@ def export_range(path: str, location: Any = None, sheet: str | None = None,
                 gridio.a1(grid.min_row + i, grid.min_col + j)
                 for i, row in enumerate(labels)
                 for j, lab in enumerate(row) if lab == "absent"][:100]
+        # Cached results from a workbook still owed a
+        # recalculation are exported with a note saying so.
+        if any(lab == "cached" for row in labels for lab in row):
+            pending = gridio.pending_recalc_note(path)
+            if pending:
+                out["cached_note"] = pending
+        if shown is not None and shown.note():
+            out["display_note"] = shown.note()
         if out_file:
+            from ..core import deadline as _deadline
+            _deadline.commit_or_raise("the export")  # point of no return
             op, ginfo = guard_out_file(
                 out_file, source=path, overwrite=overwrite,
                 what="export file")
-            with open(op, "w", encoding="utf-8", newline="") as fh:
+            with open(op, "w", encoding=_text_encoding(fmt, bom),
+                      newline="") as fh:
                 fh.write(content)
             out["written_to"] = op
             out.update(ginfo)
@@ -276,14 +516,15 @@ def _serialize_matrix(vals, fmt: str, header: bool, records: bool,
     buf = _io.StringIO()
     writer = _csv.writer(buf, delimiter=delim, lineterminator="\n")
     for row in vals:
-        writer.writerow(["" if v is None else v for v in row])
+        writer.writerow([_csv_cell(v) for v in row])
     return buf.getvalue()
 
 
 def export_file(path: str, fmt: str = "csv", sheets: list | None = None,
                 out_dir: str | None = None, out_file: str | None = None,
                 header: bool = True, values: str = "cached",
-                records: bool = False, overwrite: bool = False) -> dict:
+                records: bool = False, overwrite: bool = False,
+                bom: bool = True) -> dict:
     """Export whole sheets (or the whole workbook) to a CSV/TSV set or one
     JSON bundle. Read-only of the WORKBOOK; every output target is guarded
     by core.outguard (never the source workbook, never a workbook
@@ -308,7 +549,7 @@ def export_file(path: str, fmt: str = "csv", sheets: list | None = None,
     formula_wb = gridio.open_wb(path, data_only=False) \
         if values in ("formula", "both") else None
     cached_wb = gridio.open_wb(path, data_only=True) \
-        if values in ("cached", "both") else None
+        if values in gridio.CACHED_MODES else None
     base = formula_wb if formula_wb is not None else cached_wb
     try:
         wanted = sheets if sheets else base.sheetnames
@@ -319,6 +560,9 @@ def export_file(path: str, fmt: str = "csv", sheets: list | None = None,
         per_sheet: dict[str, Any] = {}
         exported: list[dict] = []
         absent_total = 0
+        any_cached = False
+        shown = gridio.DisplayNotes(gridio.is_1904(base.worksheets[0]), path) \
+            if values == "displayed" else None
         for name in wanted:
             grid = gridio.resolve(base, {"used_range": name})
             if grid.empty:
@@ -328,10 +572,11 @@ def export_file(path: str, fmt: str = "csv", sheets: list | None = None,
             gridio.guard_cell_count(grid)
             vals, labels, _hf = gridio.read_matrix(
                 grid, mode=values, formula_wb=formula_wb,
-                cached_wb=cached_wb, path=path)
+                cached_wb=cached_wb, path=path, display_notes=shown)
             vals = [[gridio.compact_value(v) for v in row] for row in vals]
             per_sheet[name] = _serialize_matrix(
                 vals, fmt, header, records, grid.min_col)
+            any_cached = any_cached or any("cached" in row for row in labels)
             n_absent = sum(row.count("absent") for row in labels)
             absent_total += n_absent
             entry = {"sheet": name, "range": grid.a1, "rows": len(vals)}
@@ -345,12 +590,20 @@ def export_file(path: str, fmt: str = "csv", sheets: list | None = None,
         if absent_total:
             out["warning"] = (f"{absent_total} exported cell(s): "
                               + gridio.ABSENT_WARNING)
+        if any_cached:  # a note for cached results owed a recalculation
+            pending = gridio.pending_recalc_note(path)
+            if pending:
+                out["cached_note"] = pending
+        if shown is not None and shown.note():
+            out["display_note"] = shown.note()
         if fmt == "json":
             bundle = {"workbook": os.path.basename(path),
                       "value_mode": values, "sheets": per_sheet}
             content = _json.dumps(bundle, ensure_ascii=False, default=str,
                                   indent=2)
             if out_file:
+                from ..core import deadline as _deadline
+                _deadline.commit_or_raise("the export")  # point of no return
                 op, ginfo = guard_out_file(
                     out_file, source=path, overwrite=overwrite,
                     what="export file")
@@ -395,11 +648,13 @@ def export_file(path: str, fmt: str = "csv", sheets: list | None = None,
                         ".bak beside it).")
                 written = []
                 replaced = []
+                from ..core import deadline as _deadline
+                _deadline.commit_or_raise("the export")  # point of no return
                 for dest, text in dests:
                     op, ginfo = guard_out_file(
                         dest, source=path, overwrite=overwrite,
                         what="export file")
-                    with open(op, "w", encoding="utf-8",
+                    with open(op, "w", encoding=_text_encoding(fmt, bom),
                               newline="") as fh:
                         fh.write(text)
                     written.append(op)

@@ -9,6 +9,22 @@ replaced; these helpers read them back so a test can go on asserting about
 
 from __future__ import annotations
 
+import pytest
+
+
+@pytest.fixture
+def rewrite_route(monkeypatch):
+    """Force every save in the test through the full openpyxl rewrite.
+
+    Cell edits now keep the rest of the workbook byte-for-byte
+    (core/surgical.py), so they no longer meet the hazard gate at all. The
+    gate still decides every structural edit, and the tests that pin its
+    refusals, warnings and verify backstops were written with cell edits;
+    this fixture keeps them testing the rewrite route they were written
+    for. tests/unit/test_preserve_routes.py covers what a cell edit now does
+    on the same workbooks."""
+    monkeypatch.setenv("KS4XL_SURGICAL_SAVE", "off")
+
 
 def label_at(payload: dict, addr: str) -> str:
     """The label a read payload carries for one address."""

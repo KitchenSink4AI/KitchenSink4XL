@@ -10,7 +10,10 @@ KitchenSink4XL is dual-licensed:
 
 Copyright (c) 2026 Alvut Consulting, LLC. KitchenSink4AI is a product line of Alvut Consulting, LLC.
 
-Not affiliated with, endorsed by, or sponsored by Microsoft Corporation. Microsoft and Excel are trademarks of the Microsoft group of companies.
+Not affiliated with, endorsed by, or sponsored by Microsoft Corporation. Microsoft, Excel, GitHub and Copilot are trademarks of the Microsoft group of companies.
+
+Required Notice: Copyright (c) 2026 Alvut Consulting, LLC
+(https://github.com/KitchenSink4AI/KitchenSink4XL)
 
 ## Third-party software
 
@@ -37,3 +40,6 @@ KitchenSink4XL does not redistribute any of the packages below. They are install
 | `pytest-timeout` | MIT | `dev` | Test timeouts (https://github.com/pytest-dev/pytest-timeout) |
 | `pillow` | MIT-CMU | `dev` | Image handling in tests (https://python-pillow.org) |
 | `psutil` | BSD-3-Clause | `dev` | Process inspection in tests (https://github.com/giampaolo/psutil) |
+| `build` | MIT | `dev` | Builds the edition distributions in tests (https://github.com/pypa/build) |
+| `cryptography` | Apache-2.0 OR BSD-3-Clause | `dev` | Signature checks in tests (https://github.com/pyca/cryptography) |
+| `setuptools` | MIT | `dev` | Build backend for the edition builds in tests (https://github.com/pypa/setuptools) |

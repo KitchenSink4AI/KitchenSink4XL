@@ -26,7 +26,7 @@ from xlsx_mcp.core.errors import (
 )
 from xlsx_mcp.core.package import WorkbookPackage
 
-CORPUS = Path(__file__).resolve().parents[1] / "fixtures" / "samples"
+CORPUS = Path(__file__).resolve().parents[1] / "fixtures" / "workbooks"
 
 
 def _md5(p) -> str:
@@ -88,6 +88,7 @@ def test_string_equals_is_treated_as_formula(book):
 # ------------------------------------------------------------- hazard refuse
 
 
+@pytest.mark.usefixtures("rewrite_route")
 def test_hazard_refuse_on_slicer_workbook(tmp_path):
     src = tmp_path / "sl.xlsx"
     shutil.copy(CORPUS / "pivot_slicer.xlsx", src)
@@ -100,6 +101,7 @@ def test_hazard_refuse_on_slicer_workbook(tmp_path):
     assert _md5(src) == before          # the file was NOT modified
 
 
+@pytest.mark.usefixtures("rewrite_route")
 def test_allow_loss_overrides_hazard_refuse(tmp_path):
     src = tmp_path / "sl.xlsx"
     shutil.copy(CORPUS / "pivot_slicer.xlsx", src)

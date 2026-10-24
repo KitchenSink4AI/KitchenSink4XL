@@ -3,9 +3,10 @@
 For every corpus fixture it (1) runs the cheap hazard scan, (2) does a DEFAULT
 openpyxl load+save round-trip (the naive / dangerous path a caller would hit),
 (3) diffs the zip part list before vs after to measure EMPIRICALLY what
-openpyxl drops, and (4) cross-checks: did the hazard scan detect every fragile
-part openpyxl dropped? A part openpyxl drops that the scan did NOT flag is a
-CRITICAL false negative (the silent-loss failure the brand exists to prevent).
+openpyxl drops, and (4) checks the scan against that diff: did the hazard scan
+detect every fragile part openpyxl dropped? A part openpyxl drops that the scan
+did NOT flag is a CRITICAL false negative (the silent-loss failure the brand
+exists to prevent).
 
 Pure openpyxl, no COM, so it runs in headless CI against the committed corpus.
 Importable (run_corpus / roundtrip_openpyxl) so a unit test drives it.
@@ -21,7 +22,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path.insert(0, str(ROOT / "src"))
-CORPUS = ROOT / "tests" / "fixtures" / "samples"
+CORPUS = ROOT / "tests" / "fixtures" / "workbooks"
 
 from xlsx_mcp.core import hazard  # noqa: E402
 

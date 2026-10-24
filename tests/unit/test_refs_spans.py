@@ -1,6 +1,7 @@
-"""Tests for core/refs.py: whole-column / whole-row span
-transposition (=SUM(B:B) must follow column edits and print-title names
-like $1:$2 must follow row inserts), copy-offset semantics for
+"""Re-audit tests for core/refs.py: whole-column / whole-row span
+transposition (the previously documented gap, closed because it was
+load-bearing: =SUM(B:B) went stale on every column edit and print-title
+names like $1:$2 went stale on row inserts), copy-offset semantics for
 spans, and ArrayFormula cell rewriting. All expectations hand-computed
 against Excel's own adjustment behavior.
 """
@@ -101,7 +102,10 @@ def test_time_literal_strings_untouched():
 def test_3d_sheet_prefix_not_mangled_by_span_pattern():
     e = R("Sheet1", "insert_rows", index=1, count=1)
     got = refs.transpose_formula("=SUM(Sheet1:Sheet3!A1)", e, "Other")
-    assert got == "=SUM(Sheet1:Sheet3!A2)"
+    # Excel leaves a 3D reference as it
+    # is when rows are inserted on one sheet of the span (measured with a
+    # private hidden Excel); the prefix is still not mangled.
+    assert got == "=SUM(Sheet1:Sheet3!A1)"
 
 
 def test_malformed_half_spans_never_match_as_spans():

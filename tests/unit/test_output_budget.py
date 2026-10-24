@@ -1,8 +1,9 @@
 """Output-budget pins: what a result COSTS, and that it still says everything.
 
-The input surface of this server is trimmed on purpose (see core/schemas.py:
-pay on error, not on load). The output side gets the same treatment.
-Measured: a 200-row read cost 22,666 tokens to deliver 6,479 tokens of
+The input surface of this server was fat-trimmed on purpose in September 2026
+and the reasoning behind it is recorded in core/schemas.py: pay on error, not on
+load. The output side had never had the same pass. A fat audit
+measured it: a 200-row read cost 22,666 tokens to deliver 6,479 tokens of
 payload, because every result crossed the wire twice, once pretty-printed and
 once again whole in structuredContent, and because the label matrix spent 52%
 of a read repeating the word "value" about ordinary cells.
@@ -24,6 +25,7 @@ because it is the same fat, spent in seconds instead of tokens.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import openpyxl
 import pytest
@@ -36,7 +38,7 @@ from xlsx_mcp.ops import cells, gridio
 @pytest.fixture
 def grid(tmp_path):
     """200 rows x 8 columns, one column of never-calculated formulas: the
-    shape measured."""
+    shape the audit measured."""
     p = tmp_path / "grid.xlsx"
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -146,7 +148,7 @@ def test_sparse_labels_carry_the_dense_matrix_exactly(grid):
 
 
 def test_sparse_labels_are_smaller_than_the_matrix_they_replace(grid):
-    """BUDGET: measured, on the shape described above."""
+    """BUDGET: measured, on the shape the audit measured."""
     out = cells.read_range(grid, "A1:H201", values="both")
     dense = dense_labels(out, rows=out["rows"], cols=out["cols"])
     sparse_cost = _tokens(out["labels"]) + _tokens(out["labels_default"])
@@ -220,7 +222,7 @@ def test_get_cells_qualifies_addresses_when_the_sheet_is_not_uniform(tmp_path):
 
 
 def test_get_cells_payload_is_a_fraction_of_the_dict_encoding(grid):
-    """BUDGET: 500 cells, measured against the shape it
+    """BUDGET: the audit's own case, 500 cells, measured against the shape it
     replaced ({sheet, cell, value, label} per cell)."""
     addrs = [f"{c}{r}" for r in range(2, 127) for c in "ABCD"][:500]
     out = cells.get_cells(grid, addrs)
@@ -234,7 +236,7 @@ def test_get_cells_payload_is_a_fraction_of_the_dict_encoding(grid):
     assert new_cost < old_cost / 3, (
         f"500 cells cost {new_cost} tokens against {old_cost} before")
     # and what is left is the values plus the addresses that name them. The
-    # measured at 32x over bare values; the floor for a SCATTER read is
+    # audit measured 32x over bare values; the floor for a SCATTER read is
     # not 1x, because the caller asked about 500 specific addresses and the
     # addresses are what say which value is which.
     bare = _tokens([r["value"] for r in rows])
@@ -255,8 +257,8 @@ def test_a_success_crosses_the_wire_once_and_compact():
     from xlsx_mcp import server
 
     async def run():
-        async with Client(server.mcp) as c:
-            return await c.call_tool("get_server_info", {})
+        async with Client(server.create_server()) as c:
+            return await c.call_tool("xl_read", {"op": "get_server_info"})
 
     res = asyncio.run(run())
     assert res.structured_content is None, (
@@ -272,63 +274,71 @@ def test_a_success_crosses_the_wire_once_and_compact():
 
 def test_a_refusal_keeps_its_structure_and_loses_only_the_whitespace():
     """The refusal contract is untouchable: isError, the closed code, the
-    message, the hint, and the structured payload all stay. Only the
-    indentation goes."""
+    message and the hint all stay. Family surface: the refusal now
+    crosses the wire once as well, compact, with no structuredContent copy."""
     from xlsx_mcp import envelope
     from xlsx_mcp.core.errors import WorkbookNotFound
 
-    r = envelope.refuse(WorkbookNotFound("no such workbook: nope.xlsx"))
+    payload = envelope.refusal(WorkbookNotFound("no such workbook: nope.xlsx"))
+    r = envelope.tool_result(payload, is_error=True)
     assert r.is_error is True
-    assert isinstance(r.structured_content, dict)
-    assert r["ok"] is False
-    assert r["error"]["code"] == "NOT_FOUND"
-    assert r["error"]["hint"]
+    assert r.structured_content is None
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "NOT_FOUND"
+    assert payload["error"]["hint"]
     text = r.content[0].text
     assert "\n" not in text
-    assert json.loads(text) == r.structured_content
+    assert json.loads(text) == payload
 
 
 def test_no_tool_declares_a_contentless_output_schema():
     """A schema of {"type": "object", "additionalProperties": true} validates
-    nothing, cost 828 tokens across 69 tools, and obliged every client to
-    expect a second copy of every result. If a tool ever declares a real
-    output schema it is welcome to; a contentless one is not."""
+    nothing and obliged every client to expect a second copy of every
+    result. Family surface: no tool declares an output schema at all."""
     import asyncio
+
+    from fastmcp import Client
 
     from xlsx_mcp import server
 
-    tools = asyncio.run(server.mcp.list_tools())
-    offenders = []
-    for t in tools:
-        schema = getattr(t, "output_schema", None)
-        if schema is None:
-            continue
-        keys = set(schema) - {"type", "additionalProperties"}
-        if not keys:
-            offenders.append(t.name)
-    assert not offenders, (
-        f"tools declaring a contentless outputSchema: {offenders}")
+    async def run():
+        async with Client(server.create_server()) as c:
+            return await c.list_tools()
+
+    offenders = [t.name for t in asyncio.run(run()) if t.outputSchema is not None]
+    assert not offenders, f"tools declaring an outputSchema: {offenders}"
 
 
 def test_the_published_token_figures_are_the_measured_ones():
     """The estimator counts what tools/list actually sends.
 
-    It summed description + inputSchema and dropped outputSchema, annotations
-    and _meta, so the published lite/full figures understated the wire by
-    ~16%. A server that sells honest numbers measures what it publishes.
-    """
+    It once summed description + inputSchema and dropped annotations, title
+    and _meta, so the published figures understated the wire by ~16%. A
+    server that sells honest numbers measures what it publishes. Family
+    surface: scripts/measure_surface.py counts each tool exactly as the
+    client receives it over real stdio."""
     import asyncio
+    import importlib.util
 
-    from xlsx_mcp import packs, server
+    from fastmcp import Client
 
-    tools = {t.name: t for t in asyncio.run(server.mcp.list_tools())}
-    t = tools["get_cells"]
-    wire = round(len(json.dumps(
-        t.to_mcp_tool().model_dump(exclude_none=True, by_alias=True,
-                                   mode="json"),
-        ensure_ascii=False, separators=(",", ":"))) / 4)
-    assert packs.approx_tokens(t) == wire
+    from xlsx_mcp import server
+
+    spec = importlib.util.spec_from_file_location(
+        "_measure_surface", Path(__file__).resolve().parents[2] / "scripts" /
+        "measure_surface.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    async def run():
+        async with Client(server.create_server()) as c:
+            return await c.list_tools()
+
+    t = {x.name: x for x in asyncio.run(run())}["xl_read"]
+    wire = t.model_dump(exclude_none=True, by_alias=True, mode="json")
+    assert mod.approx_tokens(wire) == round(len(json.dumps(
+        wire, ensure_ascii=False, separators=(",", ":"))) / 4)
     fields_only = len(t.description or "") + len(
-        json.dumps(t.parameters or {}, separators=(",", ":")))
-    assert packs.approx_tokens(t) > round(fields_only / 4), (
+        json.dumps(t.inputSchema or {}, separators=(",", ":")))
+    assert mod.approx_tokens(wire) > round(fields_only / 4), (
         "the estimator is back to counting the flattering subset")

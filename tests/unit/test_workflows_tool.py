@@ -1,30 +1,33 @@
 """get_workflows tests: the task listing, recipe shapes, the registry
-guarantee (every non-forthcoming step names a REGISTERED tool; every pack
-tag is real), the honest forthcoming marking on COM-tier steps, and the
+guarantee (every non-forthcoming step names a real op on the tool that
+holds it; family surface: no step, note or summary names a pack or
+enable_tools), the honest forthcoming marking on COM-tier steps, and the
 refusal path.
 """
 
 from __future__ import annotations
 
-import asyncio
+import json
+import re
 
 import pytest
 
-from xlsx_mcp import packs as _packs
-from xlsx_mcp import server
+from xlsx_mcp import registry, server  # noqa: F401  (the import registers ops)
 from xlsx_mcp.core.errors import XlMcpError
+from xlsx_mcp.settings import Settings
+from xlsx_mcp.surface import plan as _plan
 from xlsx_mcp.ops import workflows as _workflows
 
 EXPECTED_TASKS = {
     "recover-workbook", "merge-workbooks", "report-build", "data-cleanup",
     "formatting-audit-and-fix", "safe-edit-of-rich-workbook",
     "migrate-from-incumbent",
+    "migrate-from-v1",  # the migrate recipe
 }
 
 
 def _registered_names() -> set[str]:
-    tools = asyncio.run(server.mcp.list_tools())
-    return {t.name for t in tools}
+    return set(registry.public_ops())
 
 
 def test_listing_names_every_task():
@@ -40,7 +43,8 @@ def test_recipe_shape():
     assert out["summary"]
     assert isinstance(out["notes"], list)
     for step in out["steps"]:
-        assert step["tool"] and step["why"] and step["pack"]
+        assert step["tool"] and step["op"] and step["why"]
+        assert "pack" not in step
 
 
 def test_every_step_tool_is_registered_or_forthcoming():
@@ -51,8 +55,6 @@ def test_every_step_tool_is_registered_or_forthcoming():
                 assert step["tool"] in _workflows.FORTHCOMING_TOOLS, \
                     f"{task}: {step['tool']} marked forthcoming but not " \
                     "declared"
-                assert step["pack"] == "com", \
-                    f"{task}: forthcoming tools are COM-tier by definition"
                 assert step["tool"] not in registered, \
                     f"{task}: {step['tool']} is registered; drop the " \
                     "forthcoming mark"
@@ -61,25 +63,35 @@ def test_every_step_tool_is_registered_or_forthcoming():
                     f"{task}: step names unregistered tool {step['tool']!r}"
 
 
-def test_pack_tags_match_the_live_registry():
-    membership = {name: pack
-                  for pack, members in _packs.tool_names().items()
-                  for name in members}
-    for task, wf in _workflows.WORKFLOWS.items():
-        for step in wf["steps"]:
+def test_every_served_step_names_a_real_tool_and_op():
+    """Each served step is a call a client can make exactly as
+    written, on the default plan."""
+    p = _plan.build(Settings())
+    for task in _workflows.WORKFLOWS:
+        for step in _workflows.get_workflows(task)["steps"]:
             if step.get("forthcoming"):
                 continue
-            assert membership.get(step["tool"]) == step["pack"], (
-                f"{task}: {step['tool']} tagged {step['pack']!r} but lives "
-                f"in {membership.get(step['tool'])!r}")
+            assert step["op"] in p.tools[step["tool"]].ops, (task, step)
+
+
+def test_no_recipe_mentions_a_pack_or_enable_tools():
+    # migrate-from-v1's generated map names
+    # every released 1.2.5 tool, the two removed pack switches included; the
+    # recipe's own words still name no pack.
+    recipes = [_workflows.get_workflows(t) for t in _workflows.WORKFLOWS]
+    for r in recipes:
+        r.pop("map", None)
+    text = json.dumps([_workflows.get_workflows()] + recipes)
+    assert "enable_tools" not in text
+    assert not re.search(r"\bpacks?\b", text.lower())
 
 
 def test_com_steps_say_so_in_the_why():
     for wf in _workflows.WORKFLOWS.values():
         for step in wf["steps"]:
             if step.get("forthcoming"):
-                assert "com pack" in step["why"], \
-                    "a forthcoming step must say the com pack is coming"
+                assert "xl_app" in step["why"], \
+                    "a forthcoming step must say xl_app is coming"
 
 
 def test_migrate_recipe_is_note_free():

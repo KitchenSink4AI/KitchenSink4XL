@@ -15,8 +15,9 @@ because it reports the pool's state and never spawns anything. The export
 tools all write a file, so none of them qualify however read-shaped they
 feel.
 
-An honest hint buys client-side permission lenience, and an optimistic one
-would be a false safety claim in metadata.
+The sibling web server (kitchensink4web) set the pattern and the
+discipline: an honest hint buys client-side permission lenience, and an
+optimistic one would be a false safety claim in metadata.
 """
 
 from __future__ import annotations
@@ -41,8 +42,8 @@ MUTATING: frozenset[str] = frozenset({
     "com_goal_seek", "com_manage_pivot", "com_render_sheet",
     "com_save_with_password", "com_set_sparkline",
     "com_validate_opens_clean", "copy_format", "copy_range",
-    "copy_workbook", "create_table", "create_workbook", "disable_tools",
-    "enable_tools", "export_file", "export_range", "format_cells",
+    "copy_workbook", "create_table", "create_workbook",
+    "export_file", "export_range", "format_cells",
     "import_data", "manage_backups", "manage_chart", "manage_comment",
     "manage_conditional_format", "manage_data_validation",
     "manage_hyperlink", "manage_image", "manage_name", "manage_table",
@@ -50,7 +51,8 @@ MUTATING: frozenset[str] = frozenset({
     "recalculate", "replace_cells", "set_cell", "set_cells",
     "set_dimensions", "set_filter", "set_formula", "set_header_footer",
     "set_merge", "set_page_layout", "set_protection", "set_view",
-    "set_workbook_properties", "sort_range", "write_range",
+    "set_workbook_properties", "sort_range", "update_notices",
+    "update_now", "write_range",
 })
 
 

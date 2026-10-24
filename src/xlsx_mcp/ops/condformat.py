@@ -19,12 +19,13 @@ from typing import Any
 
 from openpyxl.utils import get_column_letter
 
+from ..core import vocab as _vocab
 from ..core.errors import TargetNotFound, XlMcpError
 from ..core.package import WorkbookPackage
 
 CF_ACTIONS = ("add", "list", "delete")
-#: The six base rule types, plus six more. The gap is
-#: not an openpyxl ceiling: formatting/rule.py accepts all twelve, and
+#: The six base rule types 1.0 shipped, plus the six it did not. The gap was
+#: never an openpyxl ceiling: formatting/rule.py accepts all twelve, and
 #: uniqueValues, duplicateValues, aboveAverage, timePeriod, containsBlanks
 #: and containsErrors are all buttons a user can point at in Excel's own
 #: Highlight Cells and Top/Bottom menus. Only the x14 extension rules
@@ -38,12 +39,47 @@ CF_TYPES = ("cell_is", "color_scale", "data_bar", "icon_set", "formula",
 #: Excel's timePeriod vocabulary, verbatim: a rule stores one of these
 #: strings and Excel evaluates it against the system date on open, the same
 #: deal the rest of the conditional-format surface makes.
-_TIME_PERIODS = ("today", "yesterday", "tomorrow", "last7Days", "thisWeek",
-                 "lastWeek", "nextWeek", "thisMonth", "lastMonth",
-                 "nextMonth")
-_OPERATORS = ("greaterThan", "lessThan", "greaterThanOrEqual",
-              "lessThanOrEqual", "equal", "notEqual", "between", "notBetween",
-              "containsText", "notContains", "beginsWith", "endsWith")
+#: The values are snake_case (last_7_days,
+#: greater_than); Excel's camelCase spellings are still accepted.
+_TIME_PERIODS = tuple(_vocab.TIME_PERIODS)
+_CF_OPERATORS = {**_vocab.OPERATORS, "contains_text": "containsText",
+                 "not_contains": "notContains", "begins_with": "beginsWith",
+                 "ends_with": "endsWith"}
+_OPERATORS = tuple(_CF_OPERATORS)
+
+#: List reports each rule in add's own vocabulary.
+_TYPE_NAMES = {"cellIs": "cell_is", "expression": "formula", "colorScale": "color_scale",
+               "dataBar": "data_bar", "iconSet": "icon_set", "top10": "top_bottom",
+               "uniqueValues": "unique", "duplicateValues": "duplicate",
+               "aboveAverage": "above_average", "timePeriod": "time_period",
+               "containsBlanks": "blanks", "containsErrors": "errors"}
+
+
+def _color_of(c) -> str | None:
+    rgb = getattr(c, "rgb", None)
+    return rgb if isinstance(rgb, str) else None
+
+
+def _describe(rule) -> dict:
+    """What a rule does, in add's vocabulary."""
+    out: dict = {"cf_type": _TYPE_NAMES.get(rule.type, rule.type)}
+    if getattr(rule, "operator", None):
+        out["operator"] = _vocab.from_file(rule.operator, _CF_OPERATORS)
+    if rule.formula:
+        out["formula"] = list(rule.formula)
+    if getattr(rule, "timePeriod", None):
+        out["period"] = _vocab.from_file(rule.timePeriod, _vocab.TIME_PERIODS)
+    dxf = getattr(rule, "dxf", None)
+    if dxf is not None:
+        fill = getattr(dxf, "fill", None)
+        color = _color_of(getattr(fill, "fgColor", None)) or _color_of(
+            getattr(fill, "bgColor", None))
+        if color:
+            out["fill"] = color
+        font = _color_of(getattr(getattr(dxf, "font", None), "color", None))
+        if font:
+            out["font_color"] = font
+    return out
 
 
 def _hex(c: str | None, default: str | None = None) -> str | None:
@@ -70,9 +106,8 @@ def _build_rule(cf_type: str, params: dict):
     from openpyxl.styles import Font
 
     if cf_type == "cell_is":
-        op = params.get("operator", "greaterThan")
-        if op not in _OPERATORS:
-            raise XlMcpError(f"operator must be one of {_OPERATORS}")
+        op = _vocab.to_file(params.get("operator", "greater_than"), _CF_OPERATORS,
+                            "operator")
         formula = params.get("formula")
         if formula is None:
             raise XlMcpError("cell_is needs formula (a value or [lo, hi])")
@@ -158,11 +193,8 @@ def _build_rule(cf_type: str, params: dict):
         return rule
 
     if cf_type == "time_period":
-        period = params.get("period")
-        if period not in _TIME_PERIODS:
-            raise XlMcpError(
-                f"time_period needs period, one of {_TIME_PERIODS}; got "
-                f"{period!r}")
+        period = _vocab.to_file(params.get("period"), _vocab.TIME_PERIODS,
+                                "time_period needs period, which")
         rule = Rule(type="timePeriod", timePeriod=period)
         rule.dxf = style
         return rule
@@ -204,10 +236,31 @@ def manage_conditional_format(path: str, action: str, location: Any = None,
                     for i, rule in enumerate(rules):
                         out.append({
                             "sheet": ws.title, "range": str(cf_obj.sqref),
-                            "index": i, "type": rule.type,
-                            "priority": rule.priority,
-                            "operator": getattr(rule, "operator", None)})
-            return {"rules": out, "count": len(out)}
+                            "index": i, "priority": rule.priority,
+                            **_describe(rule)})
+            # Rules stored only in Excel's extension block are not in the
+            # loaded model; they are counted from the file, so the answer
+            # never claims fewer rules than Excel has.
+            from ..core import pkginfo as _pkginfo
+            try:
+                ext = _pkginfo.x14_only_cf_rules(path)
+            except Exception:  # noqa: BLE001 - the list still answers
+                ext = {}
+            if target is not None:
+                ext = {t: n for t, n in ext.items() if t == wb[target].title}
+            result: dict = {}
+            if ext:
+                n_ext = sum(ext.values())
+                result = {"total_rules": len(out) + n_ext,
+                          "extension_only_rules": ext,
+                          "note": (
+                              f"{n_ext} rule(s) are stored only in Excel's "
+                              "extension block (for example a rule that "
+                              "refers to another sheet, or an icon set with "
+                              "custom icons); they are counted here, not "
+                              "listed")}
+            result.update({"rules": out, "count": len(out)})
+            return result
         finally:
             wb.close()
 

@@ -2,16 +2,16 @@
 
 THE DEFECT THIS CLOSES. A parameter annotated ``Any`` serializes to the
 empty schema ``{}``. That is valid JSON Schema and it is also the exact
-string that makes some clients drop a server's tools: OpenCode
-reports "could not understand the instance {}" and removes them, and Gemini
-CLI skips them as "missing types". The symptom is worse than a missing
+string that made clients drop the incumbent server's tools: OpenCode
+reported "could not understand the instance {}" and removed them, and Gemini
+CLI skipped them as "missing types". The symptom is worse than a missing
 description, because a client that cannot type a parameter has two bad
 options and takes both: skip the tool entirely, or guess. Guessing is what
 produced the live failure that started this work, where a caller sent
 ``location: {"cell": "A1"}``, the client serialized the object to the STRING
 ``'{"cell": "A1"}'`` because the schema gave it nothing to validate against,
 and the server correctly refused a string that is not an A1 reference. The
-bug looked like a transport artifact for a whole round. It was an untyped
+bug looked like a transport artifact for a long time. It was an untyped
 schema on the addressing parameter that 24 tools share.
 
 THE APPROACH. Validation behavior does not change. ``WithJsonSchema``
@@ -83,7 +83,7 @@ def _optional(schema: dict[str, Any]) -> dict[str, Any]:
     ``Location | None`` would work, but pydantic renders it as an anyOf
     wrapping an anyOf, and nesting is exactly what the clients this file
     exists for handle worst. One flat union of branches is what every
-    validator in the lane reads correctly.
+    validator among those clients reads correctly.
     """
     out = dict(schema)
     out["anyOf"] = list(schema["anyOf"]) + [{"type": "null"}]
@@ -135,14 +135,21 @@ GridPosition = Annotated[str | int | dict[str, Any],
 CELL_VALUE_SCHEMA: dict[str, Any] = {
     "description": (
         "A cell value: text, a number, a boolean, or null to clear. A "
-        "string beginning with '=' is stored as a formula."
+        "string beginning with '=' is stored as a formula; {\"date\": "
+        "\"2026-03-24\"} is a real date and {\"text\": \"...\"} is text "
+        "whatever it starts with."
     ),
     "anyOf": [
         {"type": "string"}, {"type": "number"}, {"type": "boolean"},
         {"type": "null"},
+        # A typed value, {"date": "2026-03-24"} for
+        # a real date, {"text": "=A1"} for text that starts like a formula.
+        {"type": "object", "properties": {"date": {"type": "string"},
+                                          "text": {"type": "string"}},
+         "additionalProperties": False, "minProperties": 1, "maxProperties": 1},
     ],
 }
-CellValue = Annotated[str | float | bool | None,
+CellValue = Annotated[str | float | bool | None | dict,
                       WithJsonSchema(CELL_VALUE_SCHEMA)]
 
 #: A rectangular block of them.

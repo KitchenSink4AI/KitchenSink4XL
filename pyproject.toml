@@ -1,7 +1,11 @@
 [project]
-name = "kitchensink4xl"
-version = "1.2.6"
-description = "Read and edit Excel (.xlsx) files with your AI assistant: formulas, tables, CSV and JSON, and a clear label on every calculated, cached or missing value. Local MCP server for Claude Code, Codex CLI and other MCP clients."
+# The shared editing core. It carries no licensing content and does not run
+# on its own: an edition distribution (kitchensink4xl or
+# kitchensink4xl-business, both under packages/) supplies the license
+# policy and the console commands.
+name = "kitchensink4xl-core"
+version = "2.0.0"
+description = "Read and edit Excel (.xlsx) files with your AI assistant: 131 actions, a backup before every change, formulas, tables, CSV and JSON, and a clear label on every calculated, cached or missing value. Local MCP server for Claude Code, Codex CLI and other MCP clients."
 readme = "README.md"
 license = "AGPL-3.0-only"
 license-files = ["LICENSE", "NOTICE.md"]
@@ -29,7 +33,6 @@ classifiers = [
     "Topic :: Office/Business :: Financial :: Spreadsheet",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Text Processing :: Markup :: XML",
-    "Typing :: Typed",
 ]
 requires-python = ">=3.12"
 dependencies = [
@@ -52,6 +55,8 @@ dependencies = [
 # non-Windows install of the extra is a no-op rather than a build failure.
 com = ["pywin32; sys_platform == 'win32'"]
 dev = [
+    "build",
+    "cryptography>=42",
     "pytest",
     "pytest-timeout",
     # Pillow backs the image tools and psutil backs COM process identity.
@@ -60,6 +65,9 @@ dev = [
     # behaviors need the real library present, so they belong here.
     "pillow",
     "psutil",
+    # The edition build runs `python -m build --no-isolation`, so the backend
+    # has to be present in the environment running the tests.
+    "setuptools>=77",
 ]
 
 [project.urls]
@@ -71,9 +79,9 @@ Changelog = "https://github.com/KitchenSink4AI/KitchenSink4XL/releases"
 "Agent manifest (llms.txt)" = "https://github.com/KitchenSink4AI/KitchenSink4XL/blob/main/docs/llms.txt"
 "Commercial license" = "https://github.com/KitchenSink4AI/KitchenSink4XL/issues/new?template=commercial_license.yml"
 
-[project.scripts]
-xl-mcp = "xlsx_mcp.server:main"
-kitchensink4xl = "xlsx_mcp.server:main"
+# No [project.scripts]. The core cannot start without an injected policy, so
+# the console commands live on the edition distributions in packages/ and
+# keep their existing public names there.
 
 [build-system]
 requires = ["setuptools>=77"]
@@ -85,6 +93,10 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 timeout = 120
+# An unarmed timeout is no timeout: refuse to run without the plugin.
+required_plugins = ["pytest-timeout"]
 markers = [
     "com: needs an interactive Excel instance (auto-skipped where Excel is unavailable)",
+    "public_copy: release gate on README/site figures; runs only with KS4XL_RELEASE_GATE=1",
+    "business_sources: needs the Business edition sources; skipped where they are absent (the public release ships the Community edition only)",
 ]

@@ -13,7 +13,7 @@ pull a whole sheet into the agent's context, it filters rows, projects a column
 subset, sorts, paginates, and aggregates SERVER-SIDE, returning only the slice
 or summary the caller asked for.
 
-Also: get_cells / set_cells, the SCATTER pair complementing the
+Also here: get_cells / set_cells, the SCATTER pair complementing the
 rectangular read_range / write_range (many individually addressed cells in one
 call, one save, one verify), and set_merge (merge / unmerge / list with the
 Excel semantics: merge keeps the top-left value, and absorbing cells that hold
@@ -23,6 +23,8 @@ silently).
 
 from __future__ import annotations
 
+import re
+
 import json as _json
 from copy import copy as _copy
 from typing import Any
@@ -31,7 +33,7 @@ from ..core import arrays as _arrays
 from ..core import calc as _calc
 from ..core import locate as _locate
 from ..core import refs as _refs
-from ..core.errors import RangeOutOfBounds, TargetNotFound, XlMcpError
+from ..core.errors import CeilingExceeded, RangeOutOfBounds, TargetNotFound, XlMcpError
 from ..core.package import WorkbookPackage
 from . import gridio
 
@@ -50,14 +52,16 @@ MAX_SCATTER_CELLS = 1_000
 def read_range(path: str, location: Any, values: str = "cached",
                sheet: str | None = None) -> dict:
     """Read a cell or range. values='cached' returns last calculated values,
-    'formula' the formula strings, 'both' pairs each cell with its label."""
+    'formula' the formula strings, 'both' pairs each cell with its label,
+    'displayed' the text each cell shows in Excel. cached and both add
+    `shows` for the cells whose shown text differs from their value."""
     if values not in gridio.VALUE_MODES:
         raise XlMcpError(
             f"values must be one of {gridio.VALUE_MODES}, got {values!r}")
     formula_wb = gridio.open_wb(path, data_only=False) \
         if values in ("formula", "both") else None
     cached_wb = gridio.open_wb(path, data_only=True) \
-        if values in ("cached", "both") else None
+        if values in gridio.CACHED_MODES else None
     try:
         base = formula_wb if formula_wb is not None else cached_wb
         grid = gridio.resolve(base, location, default_sheet=sheet,
@@ -66,15 +70,33 @@ def read_range(path: str, location: Any, values: str = "cached",
             return {"sheet": grid.sheet, "range": grid.a1, "empty": True,
                     "values": [], "value_mode": values}
         gridio.guard_cell_count(grid)
+        date1904 = gridio.is_1904(base[grid.sheet])
+        shown = gridio.DisplayNotes(date1904, path) if values == "displayed" else None
+        differs = gridio.ShownText(path, date1904) \
+            if values in ("cached", "both") else None
         vals, labels, has_formula = gridio.read_matrix(
             grid, mode=values, formula_wb=formula_wb, cached_wb=cached_wb,
-            path=path)
+            path=path, display_notes=shown, shown=differs)
         vals = [[gridio.compact_value(v) for v in row] for row in vals]
         out: dict[str, Any] = {
             "sheet": grid.sheet, "range": grid.a1,
             "rows": len(vals), "cols": len(vals[0]) if vals else 0,
             "value_mode": values, "values": vals,
         }
+        if differs is not None:
+            out.update(differs.fields())
+        if shown is not None and shown.note():
+            out["display_note"] = shown.note()
+        out.update(gridio.broken_shared_fields(
+            path, grid.sheet, rect=(grid.min_row, grid.min_col,
+                                    grid.max_row, grid.max_col)))
+        if values == "formula":
+            # a formula and text that starts with "=" read the same here
+            out.update(gridio.text_not_formulas([
+                gridio.a1(grid.min_row + r, grid.min_col + c)
+                for r, row in enumerate(labels) for c, label in enumerate(row)
+                if label == gridio.LABEL_DEFAULT and isinstance(vals[r][c], str)
+                and vals[r][c].startswith("=")]))
         if has_formula and values != "formula":
             # Grouped by label, listing only the cells that are NOT ordinary;
             # labels_default says what the unlisted ones carry. Identical
@@ -88,6 +110,10 @@ def read_range(path: str, location: Any, values: str = "cached",
             note = gridio.absent_note(labels)
             if note:
                 out["warning"] = note
+            if values != "formula" and sparse.get("cached"):
+                pending = gridio.pending_recalc_note(path)
+                if pending:
+                    out["cached_note"] = pending
         return out
     finally:
         for wb in (formula_wb, cached_wb):
@@ -109,14 +135,15 @@ def set_cell(path: str, location: Any, value: Any, sheet: str | None = None,
         raise XlMcpError(
             f"set_cell needs a single cell; {grid.a1} is a range. Use "
             "write_range for a block.")
-    pkg.set_cell(grid.sheet, gridio.a1(grid.min_row, grid.min_col), value)
+    pkg.set_cell(grid.sheet, gridio.a1(grid.min_row, grid.min_col), value,
+                 from_caller=True)
     return pkg.save(allow_loss=allow_loss, backup=backup,
                     verify_com=verify_com)
 
 
 def write_range(path: str, location: Any, data: list[list[Any]],
-                sheet: str | None = None, allow_loss: bool = False,
-                backup: bool = True,
+                sheet: str | None = None, parse_dates: bool = False,
+                allow_loss: bool = False, backup: bool = True,
                 verify_com: bool | None = None) -> dict:
     """Write a 2D block of values/formulas anchored at the location's top-left.
     Formula strings ('=...') are normalized. One backup + one verified save."""
@@ -142,16 +169,20 @@ def write_range(path: str, location: Any, data: list[list[Any]],
             (left + cols - 1) > gridio._locate.MAX_COL:
         raise RangeOutOfBounds(
             "the block would extend past the grid limits from its anchor")
-    if rows * cols > gridio.MAX_READ_CELLS:
-        raise RangeOutOfBounds(
+    if rows * cols > gridio.MAX_WRITE_CELLS:
+        raise CeilingExceeded(
             f"the block is {rows * cols:,} cells, over the "
-            f"{gridio.MAX_READ_CELLS:,}-cell write ceiling; split it")
+            f"{gridio.MAX_WRITE_CELLS:,}-cell write ceiling; split it")
+    from ..core.package import parse_iso_date
     for i, row in enumerate(data):
         for j, val in enumerate(row):
-            pkg.set_cell(grid.sheet, gridio.a1(top + i, left + j), val)
+            if parse_dates and isinstance(val, str) and parse_iso_date(val) is not None:
+                val = {"date": val}  # ISO date text as a real date
+            pkg.set_cell(grid.sheet, gridio.a1(top + i, left + j), val,
+                         from_caller=True)
     result = pkg.save(allow_loss=allow_loss, backup=backup,
                       verify_com=verify_com)
-    result["changed"]["anchor"] = gridio.a1(top, left)
+    result["changed"]["top_left"] = gridio.a1(top, left)  # "anchor" is a view token only
     result["changed"]["shape"] = {"rows": rows, "cols": cols}
     return result
 
@@ -289,7 +320,7 @@ def copy_range(path: str, source: Any, dest: Any, what: str = "all",
                 # untouched carried its ORIGINAL ref anchor to the new address
                 # and Excel then refused to open the workbook; and in values
                 # mode it pasted a LIVE formula, a flat contract violation,
-                # because the is_live test was the same isinstance(str) check
+                # because the is_live test was the same isinstance(str) check.
                 # Excel's own copy rebases the anchor and
                 # offsets the text (core.arrays.rebase).
                 af = _arrays.array_formula_of_value(val)
@@ -452,6 +483,52 @@ _AGG_FUNCS = {"count", "count_nonblank", "count_distinct", "sum", "avg",
               "mean", "min", "max", "first", "last"}
 
 
+#: One reading of a sort direction for sort_range keys
+#: and query_range order_by. sort_range ignored {"descending": true} (its own
+#: help example) and order "down" and sorted ascending with ok.
+_ASC = {"asc", "ascending", "up", "az", "atoz", "smallesttolargest"}
+_DESC = {"desc", "descending", "down", "za", "ztoa", "largesttosmallest"}
+_DIRECTION_KEYS = ("order", "dir", "direction")
+
+
+def sort_spec(spec: Any, what: str) -> tuple[Any, bool]:
+    """(column, descending) from a sort key or an order_by item: a column
+    alone, or {column, order|dir|direction: asc/desc (ascending, up, a-z;
+    descending, down, z-a)} or {column, descending: true/false}. An unknown
+    key, an unknown direction or two directions that disagree refuse;
+    nothing falls back to ascending silently."""
+    if not isinstance(spec, dict):
+        return spec, False
+    allowed = {"column", "descending", "ascending", *_DIRECTION_KEYS}
+    unknown = sorted(set(spec) - allowed)
+    if unknown:
+        raise XlMcpError(
+            f"each {what} item is {{column, order}} (order asc or desc, or descending "
+            f"true/false); {', '.join(unknown)} is not one of its keys")
+    if "column" not in spec:
+        raise XlMcpError(f"each {what} item needs a column")
+    found = []
+    for key in _DIRECTION_KEYS:
+        if key in spec:
+            word = re.sub(r"[\s_\-]+", "", str(spec[key])).lower()
+            if word in _DESC:
+                found.append(True)
+            elif word in _ASC:
+                found.append(False)
+            else:
+                raise XlMcpError(
+                    f"{what} direction {spec[key]!r} is not understood; use 'asc' or "
+                    "'desc' (or descending: true)")
+    for key, means_desc in (("descending", True), ("ascending", False)):
+        if key in spec:
+            if not isinstance(spec[key], bool):
+                raise XlMcpError(f"{key} must be true or false")
+            found.append(spec[key] if means_desc else not spec[key])
+    if len(set(found)) > 1:
+        raise XlMcpError(f"this {what} item gives two different directions")
+    return spec["column"], bool(found and found[0])
+
+
 def _num(v):
     if isinstance(v, bool):
         return None
@@ -492,21 +569,26 @@ def _cmp(cell, op: str, target) -> bool:
             else not _scalar_eq(cell, target)
     else:
         # Blank cells never satisfy an ordered comparison (Excel's filter
-        # behavior: "less than 5" excludes blanks). A blank must not coerce
-        # to "" ("" <= "5" would let blank rows through lt/le).
+        # behavior: "less than 5" excludes blanks). A blank used to coerce
+        # to "" and "" <= "5" let blank rows through lt/le.
         if cell is None or cell == "":
             return False
-        a = str(cell)
-        b = "" if target is None else str(target)
+        # Excel compares text without regard to case.
+        a = str(cell).casefold()
+        b = ("" if target is None else str(target)).casefold()
     return {"eq": a == b, "ne": a != b, "gt": a > b, "ge": a >= b,
             "lt": a < b, "le": a <= b}[op]
 
 
 def _scalar_eq(a, b) -> bool:
+    """Excel's equality: numbers by value, text without regard to case
+    (eq "gizmo pro" matched none of the "Gizmo Pro" rows
+    while contains matched them; Excel's filter shows all 48)."""
     an, bn = _num(a), _num(b)
     if an is not None and bn is not None:
         return an == bn
-    return ("" if a is None else str(a)) == ("" if b is None else str(b))
+    return (("" if a is None else str(a)).casefold()
+            == ("" if b is None else str(b)).casefold())
 
 
 def query_range(path: str, location: Any = None, sheet: str | None = None,
@@ -539,7 +621,7 @@ def query_range(path: str, location: Any = None, sheet: str | None = None,
     # as a JSON-ENCODED STRING ('["Region"]' or '"Region"') rather than a
     # parsed list/str. Left as-is it was looked up as a literal column name and
     # failed with no column '["Region"]'. Decode the JSON-looking string form
-    # so the natural payload works.
+    # so the natural payload works (group_by).
     if isinstance(group_by, str):
         s = group_by.strip()
         if s[:1] in ("[", '"'):
@@ -557,11 +639,27 @@ def query_range(path: str, location: Any = None, sheet: str | None = None,
             return {"sheet": grid.sheet, "source": grid.a1, "mode": "rows",
                     "columns": [], "rows": [], "matched": 0, "returned": 0,
                     "scanned": 0, "truncated": False}
-        gridio.guard_cell_count(grid)
+        # A scan returns rows a page at a time, or a summary, so it is
+        # bounded by the server's own work, not the read ceiling, and its
+        # refusal never points back at query_range.
+        gridio.guard_cell_count(
+            grid, ceiling=gridio.MAX_SCAN_CELLS,
+            advice="narrow it: a smaller range, a table, or fewer columns")
         ws = wb[grid.sheet]
-        matrix = [[gridio.compact_value(ws.cell(r, c).value)
-                   for c in range(grid.min_col, grid.max_col + 1)]
-                  for r in range(grid.min_row, grid.max_row + 1)]
+        shown = gridio.DisplayNotes(gridio.is_1904(ws), path) \
+            if values == "displayed" else None
+        if values == "displayed":
+            matrix = [[gridio.compact_value(shown.text(
+                ws.cell(r, c).value, ws.cell(r, c).number_format,
+                gridio.a1(r, c), grid.sheet, r, c))
+                       if ws.cell(r, c).value is not None else None
+                       for c in range(grid.min_col, grid.max_col + 1)]
+                      for r in range(grid.min_row, grid.max_row + 1)]
+            shown.settle_into(matrix, grid.sheet, grid.min_row, grid.min_col)
+        else:
+            matrix = [[gridio.compact_value(ws.cell(r, c).value)
+                       for c in range(grid.min_col, grid.max_col + 1)]
+                      for r in range(grid.min_row, grid.max_row + 1)]
         # STALENESS: on the cached load an uncalculated formula cell is
         # indistinguishable from a blank one, so a filter skipped it and an
         # aggregate summed around it while the caller saw a clean number.
@@ -576,9 +674,11 @@ def query_range(path: str, location: Any = None, sheet: str | None = None,
         stale_note = (
             f"{len(stale_cells)} cell(s) in {grid.a1} hold formulas with NO "
             "cached value; they were read as BLANK, so filters skipped them "
-            "and aggregates were computed without them. Run recalculate (com "
-            "pack) or open in Excel before trusting these numbers"
+            "and aggregates were computed without them. Run xl_app recalculate "
+            "or open in Excel before trusting these numbers"
         ) if stale_cells else None
+        # Results a recalculation-on-open is still owed say so.
+        pending = gridio.pending_note_for(path, grid) if data_only else None
         # column names + data rows
         from openpyxl.utils import get_column_letter
         letters = [get_column_letter(c)
@@ -633,8 +733,10 @@ def query_range(path: str, location: Any = None, sheet: str | None = None,
                 return True
             return all(results) if match == "all" else any(results)
 
-        matched_rows = [r for r in body if keep(r)]
+        matched_idx = [i for i, r in enumerate(body) if keep(r)]
+        matched_rows = [body[i] for i in matched_idx]
         matched = len(matched_rows)
+        top = grid.min_row + (1 if header and matrix else 0)
 
         if group_by and not aggregate:
             # Grouping only exists inside aggregate mode. A group_by on its
@@ -683,55 +785,56 @@ def query_range(path: str, location: Any = None, sheet: str | None = None,
                 "group_by": gbs, "groups": out_groups,
                 "matched": matched, "scanned": scanned,
             }
-            # Honesty about the Excel-semantics exclusion: numeric-looking
-            # TEXT in a summed/averaged column is ignored exactly as Excel
-            # ignores it, but silently ignoring it hides dirty data.
-            num_cols = {col_i(a["column"]) for a in aggregate
-                        if a["func"] in _NUMERIC_AGGS and "column" in a}
-            excluded_text = sum(
-                1 for row in matched_rows for ci in num_cols
-                if ci < len(row) and isinstance(row[ci], str)
-                and row[ci] != "" and _num(row[ci]) is not None)
+            # Honesty about the Excel-semantics exclusion: TEXT in a
+            # summed/averaged column is ignored exactly as Excel ignores it,
+            # but silently ignoring it hides dirty data. Every text cell
+            # counts, not only the ones Python's float()
+            # parses ("1,234.56" was skipped AND unreported), and the result
+            # names the first cells.
+            num_cols = sorted({col_i(a["column"]) for a in aggregate
+                               if a["func"] in _NUMERIC_AGGS and "column" in a})
+            excluded = [
+                (gridio.a1(top + i, grid.min_col + ci), body[i][ci])
+                for i in matched_idx for ci in num_cols
+                if ci < len(body[i]) and isinstance(body[i][ci], str) and body[i][ci] != ""]
+            excluded_cells = [a for a, _v in excluded]
             warns = []
-            if excluded_text:
+            if excluded_cells:
+                agg_out["excluded_text"] = {"count": len(excluded_cells),
+                                            "cells": excluded_cells[:10]}
+                agg_out["partial"] = True
+                first = ", ".join(
+                    f"{a} {(v if len(v) <= 20 else v[:19] + '…')!r}" for a, v in excluded[:5])
                 warns.append(
-                    f"{excluded_text} cell(s) in aggregated column(s) hold "
-                    "TEXT that merely looks numeric ('007'-style); they "
-                    "were excluded from sum/avg/min/max, matching Excel's "
-                    "SUM/AVERAGE semantics. Convert them to real numbers "
-                    "if they should count.")
+                    f"{len(excluded_cells)} cell(s) in the aggregated column(s) hold TEXT "
+                    f"(first: {first}); sum, avg, min and max "
+                    "left them out, as Excel's SUM and AVERAGE do, so the result covers "
+                    "only the numbers. Convert those cells to numbers if they should "
+                    "count.")
             if stale_note:
                 warns.append(stale_note)
                 agg_out["uncalculated_cells"] = stale_cells[:100]
             if warns:
                 agg_out["warning"] = " ".join(warns)
+            if pending:
+                agg_out["cached_note"] = pending
+            if shown is not None and shown.note():
+                agg_out["display_note"] = shown.note()
             return agg_out
 
         # sort BEFORE projection, so order_by works on any source column,
-        # projected or not (an order_by column missing from `columns` must
-        # not be silently ignored).
+        # projected or not (an order_by column missing from `columns`
+        # was once silently ignored).
         if order_by:
             for spec in reversed(order_by):
-                ci = col_i(spec["column"]) if isinstance(spec, dict) \
-                    else col_i(spec)
+                column, desc = sort_spec(spec, "order_by")
+                ci = col_i(column)
                 # Direction: accept dir / order / direction (a caller reaching
                 # for the SQL word "order" used to be ignored SILENTLY, so a
                 # {"order": "desc"} spec sorted ascending with no error -- a
                 # silent wrong result, the worst kind.
                 # An unrecognized direction word now refuses rather than
                 # defaulting quietly to ascending.
-                desc = False
-                if isinstance(spec, dict):
-                    d = spec.get("dir", spec.get("order",
-                                                 spec.get("direction", "asc")))
-                    dl = str(d).strip().lower()
-                    if dl in ("desc", "descending"):
-                        desc = True
-                    elif dl not in ("asc", "ascending"):
-                        raise XlMcpError(
-                            f"order_by direction {d!r} is not understood; use "
-                            "'asc' or 'desc' (key 'dir', 'order', or "
-                            "'direction')")
                 matched_rows.sort(
                     key=lambda r, k=ci, d=desc: _sort_key(
                         r[k] if k < len(r) else None, reverse=d),
@@ -775,9 +878,15 @@ def query_range(path: str, location: Any = None, sheet: str | None = None,
             "scanned": scanned, "distinct_after_filter": total_after_filter,
             "truncated": truncated, "value_mode": values,
         }
+        if truncated:
+            row_out["next_offset"] = int(offset or 0) + len(rows)
         if stale_note:
             row_out["warning"] = stale_note
             row_out["uncalculated_cells"] = stale_cells[:100]
+        if pending:
+            row_out["cached_note"] = pending
+        if shown is not None and shown.note():
+            row_out["display_note"] = shown.note()
         return row_out
     finally:
         wb.close()
@@ -795,7 +904,7 @@ _NUMERIC_AGGS = frozenset({"sum", "avg", "mean", "min", "max"})
 def _agg_numeric(v) -> bool:
     """A value Excel's SUM/AVERAGE/MIN/MAX would consume: a real number.
     Text is ignored even when it LOOKS numeric ('007'), and so are
-    booleans -- verified against Excel: SUM over a mixed column
+    booleans -- COM ground truth: SUM over a mixed column
     matched exactly this rule while the old float() coercion pulled text
     in and disagreed with Excel's own cell by 7."""
     return isinstance(v, (int, float)) and not isinstance(v, bool)
@@ -889,7 +998,8 @@ def _sort_key(v, *, reverse: bool = False):
     if s in _ERROR_LITERALS:
         # Excel treats every error as EQUAL in a sort and leaves them in their
         # original order: a column reading #VALUE!, #REF!, #N/A, #DIV/0! comes
-        # back in exactly that order (verified against Excel). Keying on the literal alphabetized them; an identical key makes
+        # back in exactly that order (COM ground truth). Keying on the
+        # literal alphabetized them; an identical key makes
         # Python's stable sort reproduce Excel's leave-them-alone behaviour.
         return (3, 0.0, "")
     return (1, 0.0, s.casefold())
@@ -915,7 +1025,8 @@ def get_cells(path: str, cells: list, values: str = "cached",
               sheet: str | None = None) -> dict:
     """Read many individually addressed cells in one call. Each item is a
     location object or A1 string resolving to ONE cell; values is cached |
-    formula | both, labelled like read_range."""
+    formula | both | displayed, labelled like read_range, and cached and
+    both add `shows` like read_range."""
     if values not in gridio.VALUE_MODES:
         raise XlMcpError(
             f"values must be one of {gridio.VALUE_MODES}, got {values!r}")
@@ -924,13 +1035,13 @@ def get_cells(path: str, cells: list, values: str = "cached",
             "cells must be a non-empty list of cell addresses "
             "(location objects or A1 strings)")
     if len(cells) > MAX_SCATTER_CELLS:
-        raise RangeOutOfBounds(
+        raise CeilingExceeded(
             f"{len(cells):,} cells is over the {MAX_SCATTER_CELLS:,}-cell "
             "scatter ceiling; use read_range or query_range for bulk reads")
     formula_wb = gridio.open_wb(path, data_only=False) \
         if values in ("formula", "both") else None
     cached_wb = gridio.open_wb(path, data_only=True) \
-        if values in ("cached", "both") else None
+        if values in gridio.CACHED_MODES else None
     try:
         base = formula_wb if formula_wb is not None else cached_wb
         # Resolve every address FIRST. The honest-label probe is per sheet,
@@ -941,7 +1052,7 @@ def get_cells(path: str, cells: list, values: str = "cached",
         grids = [_single_cell_grid(base, item, i, sheet, path=path)
                  for i, item in enumerate(cells)]
         masks: dict[str, Any] = {}
-        if values == "cached":
+        if values in ("cached", "displayed"):
             by_sheet: dict[str, list[tuple[int, int]]] = {}
             for g in grids:
                 by_sheet.setdefault(g.sheet, []).append((g.min_row, g.min_col))
@@ -951,22 +1062,35 @@ def get_cells(path: str, cells: list, values: str = "cached",
         sheets = {g.sheet for g in grids}
         one_sheet = sheets.pop() if len(sheets) == 1 else None
         rows: list[list[Any]] = []
+        at: dict[tuple[str, int, int], int] = {}
         labelled: dict[str, list[str]] = {}
         absent = 0
+        date1904 = gridio.is_1904(base.worksheets[0])
+        shown = gridio.DisplayNotes(date1904, path) if values == "displayed" else None
+        differs = gridio.ShownText(path, date1904, qualify=one_sheet is None) \
+            if values in ("cached", "both") else None
         for grid in grids:
             vals, labels, _hf = gridio.read_matrix(
                 grid, mode=values, formula_wb=formula_wb, cached_wb=cached_wb,
                 path=path,
-                mask=masks[grid.sheet] if values == "cached"
-                else gridio.NO_MASK)
+                mask=masks[grid.sheet] if values in ("cached", "displayed")
+                else gridio.NO_MASK, display_notes=shown, shown=differs,
+                settle=False)
             label = labels[0][0]
             if label == _calc.LABEL_ABSENT:
                 absent += 1
             addr = grid.a1 if one_sheet is not None \
                 else _locate.qualify_a1(grid.sheet, grid.a1)
             rows.append([addr, gridio.compact_value(vals[0][0])])
+            at[(grid.sheet, grid.min_row, grid.min_col)] = len(rows) - 1
             if label != gridio.LABEL_DEFAULT:
                 labelled.setdefault(label, []).append(addr)
+        if shown is not None:
+            # the displayed text of a time at an exact half of its last unit,
+            # from the number the file stores (one pass per sheet)
+            for key, text in shown.settle().items():
+                if key in at:
+                    rows[at[key]][1] = text
         # fields names the row shape, so the two cases (all one sheet, or
         # sheet-qualified addresses) read the same way; the per-cell "sheet"
         # and "label" keys they replace were 33 characters x N of pure
@@ -976,11 +1100,27 @@ def get_cells(path: str, cells: list, values: str = "cached",
             "fields": ["cell", "value"], "cells": rows}
         if one_sheet is not None:
             result["sheet"] = one_sheet
+        if differs is not None:
+            result.update(differs.fields())
+        if shown is not None and shown.note():
+            result["display_note"] = shown.note()
+        result.update(gridio.broken_shared_fields(
+            path, cells={(g.sheet, g.min_row, g.min_col) for g in grids},
+            qualify=one_sheet is None))
         if labelled:
             result["labels"] = labelled
             result["labels_default"] = gridio.LABEL_DEFAULT
         if absent:
             result["warning"] = f"{absent} of them: " + gridio.ABSENT_WARNING
+        # The note follows the labels, and when the formula
+        # probe could not answer for a sheet the cells may hold formulas, so
+        # the note is given rather than withheld.
+        probe_failed = values in ("cached", "displayed") and any(
+            m is None for m in masks.values())
+        if labelled.get("cached") or probe_failed:
+            pending = gridio.pending_recalc_note(path)
+            if pending:
+                result["cached_note"] = pending
         return result
     finally:
         for wb in (formula_wb, cached_wb):
@@ -998,7 +1138,7 @@ def set_cells(path: str, cells: list, sheet: str | None = None,
         raise XlMcpError(
             "cells must be a non-empty list of {cell, value} objects")
     if len(cells) > MAX_SCATTER_CELLS:
-        raise RangeOutOfBounds(
+        raise CeilingExceeded(
             f"{len(cells):,} cells is over the {MAX_SCATTER_CELLS:,}-cell "
             "scatter ceiling; use write_range or apply_edits for bulk writes")
     pkg = WorkbookPackage.open(path)
@@ -1017,7 +1157,7 @@ def set_cells(path: str, cells: list, sheet: str | None = None,
                                  item.get("sheet", sheet))
         plan.append((grid, item["value"]))
     for grid, value in plan:
-        pkg.set_cell(grid.sheet, grid.a1, value)
+        pkg.set_cell(grid.sheet, grid.a1, value, from_caller=True)
     result = pkg.save(allow_loss=allow_loss, backup=backup,
                       verify_com=verify_com)
     result["changed"]["cells_written"] = len(plan)

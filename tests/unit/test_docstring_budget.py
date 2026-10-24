@@ -1,41 +1,49 @@
-"""Docstring budgets and the no-em-dash rule.
+"""Docstring budgets and the no-em-dash rule, the same as in the Word and PowerPoint tests.
 
-Two rules, enforced mechanically:
+Two rules, enforced mechanically (the Glama Tool-Definition-
+Quality-A discipline):
 
 - NO EM DASHES anywhere in a tool description.
 - DOCSTRING BUDGET: every description in 60-130 tokens (chars/4), multiplex
-  tools to ~350. Binding across the whole registered surface.
+  tools to ~350. Binding across the whole registered surface
+  (SURFACE_READY below).
 
-The MULTIPLEX list is an exemption, so it is reviewed like one. It holds
+The MULTIPLEX list is an exemption, so it is audited like one. It now holds
 26 of the 69 registered tools, and those 26 carry 54% of the description
-budget. Adding a name here
+budget; a planning entry for manage_power_query sat in it for months after
+the tool was dropped. Adding a name here
 is a decision to spend up to 220 extra tokens on it, every session it is
 loaded.
 
 MULTIPLEX pre-lists the planned high-traffic / action-parameter tools
- so later additions inherit the ~350 cap without touching
+so later additions inherit the ~350 cap without touching
 this file.
 """
 
 from __future__ import annotations
 
-import asyncio
+import inspect
 
 import pytest
 
-from xlsx_mcp import server
+from xlsx_mcp import registry, server  # noqa: F401  (the import registers ops)
+from xlsx_mcp.settings import Settings
+from xlsx_mcp.surface import plan
 
-# The docstring budget binds across the whole registered surface.
+# The core data-plane families have landed, so the
+# docstring budget binds across the whole registered surface.
 SURFACE_READY = True
 
-# The multiplex / high-traffic tools that earn the ~350-token cap.
+# The planned multiplex / high-traffic tools that earn the ~350-token cap
+# (pre-listed so later additions inherit the cap). The
+# later additions (query_range, the token-shaped read) join here.
 MULTIPLEX = {
     "get_grid_view", "apply_edits", "validate", "get_workflows",
     "diagnose_workbook", "manage_worksheet", "manage_backups",
     "manage_table", "manage_name", "manage_comment", "manage_hyperlink",
     "manage_conditional_format", "manage_data_validation",
     "modify_grid_structure", "audit_formulas",
-    "com_manage_pivot", "enable_tools", "disable_tools",
+    "com_manage_pivot",
     "query_range",
     # set_merge is an action-parameter tool (merge/unmerge/list);
     # replace_cells is high-traffic with dry-run, plan-first, and
@@ -55,29 +63,36 @@ MULTIPLEX = {
 }
 
 
+class _Op:
+    """An op's shipped docstring as xl_help serves it (family surface: the
+    per-op description is no longer a wire tool description, but it is
+    still what a client reads about the op, and its first sentence is the
+    op's line in the tool description)."""
+
+    def __init__(self, name, spec):
+        self.name = name
+        self.description = inspect.getdoc(spec.handler) or ""
+
+
 def _tools():
-    """The shipped surface only: tools whose function lives in an xlsx_mcp
-    module (staging/integration snippets that re-register on the shared
-    FastMCP instance are filtered out)."""
-    tools = asyncio.run(server.mcp.list_tools())
-    return [
-        t for t in tools
-        if getattr(getattr(t, "fn", None), "__module__", "").startswith(
-            "xlsx_mcp"
-        )
-    ]
+    return [_Op(n, s) for n, s in registry.public_ops().items()]
 
 
 def test_no_em_dashes_in_descriptions():
-    """Standing rule: no em dashes anywhere public."""
+    """Standing rule: no em dashes anywhere public.
+    Checked on every op docstring and on the seven wire tools."""
     for tool in _tools():
         desc = tool.description or ""
-        assert "—" not in desc, f"{tool.name} description has an em dash"
+        assert "\u2014" not in desc, f"{tool.name} description has an em dash"
+    for name, tool in plan.build(Settings()).tools.items():
+        assert "\u2014" not in tool.description + str(tool.input_schema), name
 
 
 def test_docstring_budget():
     """Every tool description inside 60-130 tokens (chars/4; multiplex tools
-    to ~350). Skipped when SURFACE_READY is False."""
+    to ~350). Skipped until SURFACE_READY: the full surface does not exist in
+    a bare scaffold, so enforcing the lower bound would be a false
+    failure. The gate is wired; flip SURFACE_READY to bind it."""
     if not SURFACE_READY:
         pytest.skip(
             "docstring budget gated until the engine surface lands "

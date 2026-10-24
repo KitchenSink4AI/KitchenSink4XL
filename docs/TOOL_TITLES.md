@@ -23,7 +23,7 @@ inventing one:
 Titles are unique within this server and none exceeds 40 characters. No
 title carries product or marketing language.
 
-69 tools.
+69 operations.
 
 | Tool | Title | Source |
 |---|---|---|
@@ -49,8 +49,6 @@ title carries product or marketing language.
 | `create_table` | Create Table | mechanical |
 | `create_workbook` | Create Workbook | mechanical |
 | `diagnose_workbook` | Diagnose Workbook | mechanical |
-| `disable_tools` | Disable Tools | mechanical |
-| `enable_tools` | Enable Tools | mechanical |
 | `export_file` | Export File | mechanical |
 | `export_range` | Export Range | mechanical |
 | `find_cells` | Find Cells | mechanical |
@@ -94,5 +92,7 @@ title carries product or marketing language.
 | `set_view` | Set View | mechanical |
 | `set_workbook_properties` | Set Workbook Properties | mechanical |
 | `sort_range` | Sort Range | mechanical |
+| `update_notices` | Update Notices | mechanical |
+| `update_now` | Update Now | mechanical |
 | `validate` | Validate Workbook | first clause of its description |
 | `write_range` | Write Range | mechanical |

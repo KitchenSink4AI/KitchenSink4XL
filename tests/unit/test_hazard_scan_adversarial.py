@@ -1,13 +1,13 @@
-"""Adversarial tests for the safety core.
+"""Adversarial tests for the safety core, added by the re-audit.
 
-Covers: fragile part types missing from the hazard table (all empirically
-confirmed to drop on an openpyxl round-trip), the chart-drawing heuristic
-bypass (a textbox beside a chart needs no relationship, so a rels-only test
-misses it), loss by REPLACEMENT rather than omission (a fragile part written
-back empty or as garbage XML), the lazy read_only load letting a truncated
-sheet part pass structural verify, and the keep_vba check claiming
-preservation for a vbaProject.bin inside a plain .xlsx where keep_vba never
-applies.
+Every test here encodes a hole the re-audit found (or probed and found safe):
+fragile part types the original HAZARD_SPECS missed (all empirically confirmed
+to drop on an openpyxl round-trip), the chart-drawing heuristic bypass (a
+textbox beside a chart needs no relationship, so a rels-only test misses it),
+loss by REPLACEMENT rather than omission (a fragile part written back empty or
+as garbage XML), the lazy read_only load letting a truncated sheet part pass
+structural verify, and the keep_vba gate claiming preservation for a
+vbaProject.bin inside a plain .xlsx where keep_vba never applies.
 """
 
 from __future__ import annotations
@@ -68,8 +68,8 @@ def _replace_part(src: Path, dst: Path, member: str, data: bytes) -> Path:
 
 # --------------------------------------- missing fragile-part classes (fixed)
 
-# Every one of these was empirically confirmed to be silently DROPPED by an
-# openpyxl load+save.
+# Every one of these was empirically confirmed by the re-audit to be silently
+# DROPPED by an openpyxl load+save while the pre-audit scan reported clean.
 _NEW_DROP_PARTS = [
     ("xl/embeddings/oleObject1.bin", "embeddings"),
     ("xl/persons/person.xml", "threaded_comments"),
@@ -93,7 +93,7 @@ def test_previously_missed_drop_parts_are_flagged(part, key):
 
 def test_external_links_deliberately_not_flagged():
     """openpyxl MODELS external links and preserves them on round-trip
-, so they carry no spec."""
+    (verified empirically by the re-audit), so they carry no spec."""
     r = hazard.scan_names(["xl/workbook.xml",
                            "xl/externalLinks/externalLink1.xml"])
     assert r.clean is True
@@ -143,8 +143,8 @@ def _drawing_reader(rels: bytes, drawing: bytes):
 
 def test_chart_plus_inline_textbox_is_still_a_drop():
     """THE BYPASS: a textbox drawn beside a chart in the same drawing has no
-    relationship of its own, so its rels are all-chart. A rels-only
-    heuristic would call this chart-only and silently drop the
+    relationship of its own, so its rels are all-chart. The pre-audit rels-only
+    heuristic called this chart-only and would have silently dropped the
     textbox. The drawing XML content check closes it."""
     names = ["xl/drawings/drawing1.xml",
              "xl/drawings/_rels/drawing1.xml.rels",
@@ -223,7 +223,7 @@ def test_untouched_fragile_part_passes_content_check(tmp_path):
 
 def test_truncated_sheet_xml_fails_structural_check(tmp_path):
     """openpyxl's read_only load is lazy and never parses sheet XML, so before
-    the streaming parse a truncated/garbage sheet part passed structural verify
+    the re-audit a truncated/garbage sheet part passed structural verify
     whenever no cell read-back ran (exactly the structural-edit saves, which
     clear their cell intents). The streaming XML parse closes this."""
     src = _make_clean(tmp_path / "src.xlsx")
@@ -268,13 +268,14 @@ def _make_xlsx_with_vba(tmp_path: Path) -> Path:
     src = _make_clean(tmp_path / "plain.xlsx")
     return _inject_part(
         src, tmp_path / "renamed_macro.xlsx", "xl/vbaProject.bin",
-        b"\xd0\xcf\x11\xe0fake-vba", "application/vnd.ms-office.vbaProject")
+        b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1fake-vba", "application/vnd.ms-office.vbaProject")
 
 
+@pytest.mark.usefixtures("rewrite_route")
 def test_vba_in_plain_xlsx_refuses_instead_of_claiming_keep_vba(tmp_path):
     """keep_vba only applies to .xlsm paths. A vbaProject.bin inside a plain
-    .xlsx (renamed file) would be DROPPED by the save, so it must not warn
-    'preserved via keep_vba'. It must refuse as a hard drop."""
+    .xlsx (renamed file) would be DROPPED by the save, but the pre-audit gate
+    warned 'preserved via keep_vba'. It must refuse as a hard drop."""
     path = _make_xlsx_with_vba(tmp_path)
     pkg = WorkbookPackage.open(str(path))
     pkg.set_cell("S", "A3", 3)
@@ -283,6 +284,7 @@ def test_vba_in_plain_xlsx_refuses_instead_of_claiming_keep_vba(tmp_path):
     assert "VBA" in str(exc_info.value)
 
 
+@pytest.mark.usefixtures("rewrite_route")
 def test_vba_in_plain_xlsx_allow_loss_proceeds_with_honest_warning(tmp_path):
     path = _make_xlsx_with_vba(tmp_path)
     pkg = WorkbookPackage.open(str(path))
@@ -296,12 +298,13 @@ def test_vba_in_plain_xlsx_allow_loss_proceeds_with_honest_warning(tmp_path):
         assert "xl/vbaProject.bin" not in zf.namelist()
 
 
+@pytest.mark.usefixtures("rewrite_route")
 def test_xlsm_keep_vba_warning_still_accurate(tmp_path):
     """For a real .xlsm the conditional warning stays (keep_vba IS applied)."""
     src = _make_clean(tmp_path / "m.xlsx")
     macro = _inject_part(
         src, tmp_path / "m.xlsm", "xl/vbaProject.bin",
-        b"\xd0\xcf\x11\xe0fake-vba", "application/vnd.ms-office.vbaProject")
+        b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1fake-vba", "application/vnd.ms-office.vbaProject")
     pkg = WorkbookPackage.open(str(macro))
     pkg.set_cell("S", "A3", 3)
     result = pkg.save()
@@ -332,7 +335,7 @@ def test_package_save_end_to_end_still_green(tmp_path):
 
 # --------------------- default-fail part-inventory verification (this change)
 
-_CORPUS = Path(__file__).resolve().parents[1] / "fixtures" / "samples"
+_CORPUS = Path(__file__).resolve().parents[1] / "fixtures" / "workbooks"
 _CORPUS_FIXTURES = sorted(
     f.name for f in _CORPUS.glob("*.xls*") if not f.name.startswith("_"))
 
@@ -362,6 +365,7 @@ def _make_with_future_part(tmp_path: Path, name: str = "wb.xlsx") -> Path:
         "application/xml")
 
 
+@pytest.mark.usefixtures("rewrite_route")
 def test_uncataloged_part_loss_fails_and_preserves_original(tmp_path):
     path = _make_with_future_part(tmp_path)
     original = path.read_bytes()
@@ -373,6 +377,7 @@ def test_uncataloged_part_loss_fails_and_preserves_original(tmp_path):
     assert path.read_bytes() == original
 
 
+@pytest.mark.usefixtures("rewrite_route")
 def test_uncataloged_part_loss_not_excused_by_allow_loss(tmp_path):
     """allow_loss consents to the loss of NAMED fragile families the hazard
     gate warned about; it must not excuse an unrelated surprise loss."""
@@ -386,6 +391,7 @@ def test_uncataloged_part_loss_not_excused_by_allow_loss(tmp_path):
     assert path.read_bytes() == original
 
 
+@pytest.mark.usefixtures("rewrite_route")
 def test_allow_loss_still_covers_named_fragile_family(tmp_path):
     """The interaction the flip must not break: a user who accepted the loss
     of a named fragile family (slicers here) saves fine under allow_loss."""
@@ -402,6 +408,7 @@ def test_allow_loss_still_covers_named_fragile_family(tmp_path):
         assert "xl/slicers/slicer1.xml" not in zf.namelist()
 
 
+@pytest.mark.usefixtures("rewrite_route")
 def test_fragile_consent_plus_surprise_loss_still_fails(tmp_path):
     """allow_loss for the slicer AND an uncataloged part in the same file:
     the surprise loss must still refuse the save."""

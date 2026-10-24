@@ -1,9 +1,10 @@
 """core/outguard.py: the output-target guard for tools that write files
 OUTSIDE the mutation pipeline.
 
-Without a guard, export_range / export_file could write their out_file over
-the workbook itself (or poison its backup slots) with CSV and return ok:true,
-leaving nothing to restore. This module is the general fix: NO tool whose
+Before this guard, export_range / export_file wrote their out_file with no
+guard at all, so two "read-only" calls could overwrite the workbook itself
+(or poison its backup slots) with CSV and return ok:true, leaving nothing to
+restore. This module is the CLASS fix, not the instance fix: NO tool whose
 contract is non-mutating-of-the-workbook may ever overwrite an existing
 file silently. The rules, applied to every out_file / out_dir / output
 target:
@@ -37,8 +38,10 @@ from .safesave import (
     MAX_NAME_CHARS,
     bound_name,
     canonical_key,
+    in_backup_store,
     name_fits,
 )
+from .sandbox import WINDOWS_DEVICE_NAMES as _SANDBOX_DEVICE_NAMES
 from .sandbox import check_path
 
 #: Extensions that mean "this path is (or is meant to be) a workbook".
@@ -53,11 +56,7 @@ WORKBOOK_EXTS = frozenset({
 #: AUX, or "CON" from a header row). Checked on every platform, not only
 #: Windows, so a path built on Linux and consumed on Windows refuses in the
 #: same place either way.
-WINDOWS_DEVICE_NAMES = frozenset({
-    "CON", "PRN", "AUX", "NUL",
-    *(f"COM{i}" for i in range(1, 10)),
-    *(f"LPT{i}" for i in range(1, 10)),
-})
+WINDOWS_DEVICE_NAMES = _SANDBOX_DEVICE_NAMES  # one list (core/sandbox.py)
 
 
 def _device_name(p: Path) -> str | None:
@@ -69,7 +68,8 @@ def _device_name(p: Path) -> str | None:
 
 
 def _in_backup_store(p: Path) -> bool:
-    return any(part.lower() == BACKUP_DIR_NAME for part in p.parts)
+    # Lexical AND junction-resolved: safesave.in_backup_store.
+    return in_backup_store(p)
 
 
 def _timestamped_backup(target: str) -> str:
@@ -109,15 +109,8 @@ def guard_out_dir(target: str, *, what: str = "export output") -> str:
     return od
 
 
-def guard_out_file(target: str, *, source: str | None = None,
-                   overwrite: bool = False, what: str = "export output",
-                   workbook_target: bool = False) -> tuple[str, dict]:
-    """Apply the output-target rules. Returns (checked_path, info) where
-    info carries overwrote/backup_of_replaced when an existing file was
-    (legitimately) replaced. Raises on every refusal; nothing is written."""
-    op = check_path(target, f"write {what}")
-    tp = Path(os.path.abspath(op))
-
+def _refuse_source_or_store(op: str, tp: Path, source: str | None, what: str) -> None:
+    """Rules 1 and 2: never the source workbook, never the backup store."""
     if source is not None:
         try:
             same = canonical_key(op) == canonical_key(source)
@@ -134,6 +127,35 @@ def guard_out_file(target: str, *, source: str | None = None,
             f"refusing to write {what} inside a {BACKUP_DIR_NAME} backup "
             "store: overwriting a backup slot destroys the undo it holds. "
             "Choose an output path outside the backup store.")
+
+
+def refuse_given_name(target: str, *, source: str | None = None,
+                      what: str = "export output") -> None:
+    """Rules 1 to 3 on the name a caller GAVE, for a writer that then adds
+    an extension of its own (com_export_pdf turns 'report'
+    into 'report.pdf'). The file actually written is guarded separately with
+    guard_out_file; this keeps a given name that is the source, a backup
+    slot, or a workbook from being quietly turned into a sibling."""
+    op = check_path(target, f"write {what}")
+    tp = Path(os.path.abspath(op))
+    _refuse_source_or_store(op, tp, source, what)
+    if tp.suffix.lower() in WORKBOOK_EXTS:
+        raise XlMcpError(
+            f"out target {op} has a workbook extension ({tp.suffix}); this "
+            f"tool writes {what}, never a workbook, so a workbook-named "
+            "target is almost certainly a path mix-up. Pass an output path "
+            "ending in the export's own extension.")
+
+
+def guard_out_file(target: str, *, source: str | None = None,
+                   overwrite: bool = False, what: str = "export output",
+                   workbook_target: bool = False) -> tuple[str, dict]:
+    """Apply the output-target rules. Returns (checked_path, info) where
+    info carries overwrote/backup_of_replaced when an existing file was
+    (legitimately) replaced. Raises on every refusal; nothing is written."""
+    op = check_path(target, f"write {what}")
+    tp = Path(os.path.abspath(op))
+    _refuse_source_or_store(op, tp, source, what)
 
     device = _device_name(tp)
     if device is not None:
@@ -179,5 +201,5 @@ def guard_out_file(target: str, *, source: str | None = None,
     return op, info
 
 
-__all__ = ["guard_out_file", "guard_out_dir", "WORKBOOK_EXTS",
+__all__ = ["guard_out_file", "guard_out_dir", "refuse_given_name", "WORKBOOK_EXTS",
            "WINDOWS_DEVICE_NAMES"]

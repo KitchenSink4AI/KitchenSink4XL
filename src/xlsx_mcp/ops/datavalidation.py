@@ -17,13 +17,15 @@ from __future__ import annotations
 from typing import Any
 
 from ..core import limits as _limits
+from ..core import vocab as _vocab
 from ..core.errors import TargetNotFound, XlMcpError
 from ..core.package import WorkbookPackage
 
 DV_ACTIONS = ("add", "list", "delete")
-DV_TYPES = ("list", "whole", "decimal", "date", "time", "textLength", "custom")
-_OPERATORS = ("between", "notBetween", "equal", "notEqual", "greaterThan",
-              "lessThan", "greaterThanOrEqual", "lessThanOrEqual")
+#: snake_case values; the camelCase file spellings
+#: (textLength, greaterThan, ...) are still accepted.
+DV_TYPES = tuple(_vocab.DV_TYPES)
+_OPERATORS = tuple(_vocab.OPERATORS)
 
 
 def _list_formula(values: Any) -> tuple[str, bool]:
@@ -38,6 +40,15 @@ def _list_formula(values: Any) -> tuple[str, bool]:
     if isinstance(values, list):
         if not values:
             raise XlMcpError("a list validation needs at least one item")
+        # Excel's inline list has no escape for a comma,
+        # so "Pending, review" became two items. Refuse it and name the
+        # route that keeps it whole.
+        commas = [str(v) for v in values if "," in str(v)]
+        if commas:
+            raise XlMcpError(
+                f"the item {commas[0]!r} holds a comma, and an inline dropdown list cannot "
+                "keep one (Excel splits the item there). Put the items in cells and pass "
+                "their range as values, for example 'Lists!$A$1:$A$5'.")
         joined = ",".join(str(v) for v in values)
         return '"' + joined.replace('"', '""') + '"', False
     s = str(values).strip()
@@ -71,20 +82,41 @@ def manage_data_validation(path: str, action: str, location: Any = None,
                 for dv in (dvs.dataValidation if dvs is not None else []):
                     out.append({
                         "sheet": ws.title, "range": str(dv.sqref),
-                        "type": dv.type, "operator": dv.operator,
+                        "type": _vocab.from_file(dv.type, _vocab.DV_TYPES),
+                        "operator": _vocab.from_file(dv.operator, _vocab.OPERATORS),
                         "formula1": dv.formula1, "formula2": dv.formula2,
                         "allow_blank": dv.allowBlank})
-            return {"validations": out, "count": len(out)}
         finally:
             wb.close()
+        # A dropdown whose list lives on another sheet is stored in
+        # the worksheet's x14 extension block, which openpyxl discards at
+        # load, so the list above never saw the most common kind of
+        # dropdown. Read them from the part itself.
+        from ..core import pkginfo as _pkginfo
+        from ..core.sandbox import check_path
+        x14 = _pkginfo.x14_validations(check_path(path, "open workbook"),
+                                       sheet)
+        n_x14 = 0
+        for title, items in x14.items():
+            for item in items:
+                out.append({"sheet": title, **item, "stored_as": "x14",
+                            "editable": False})
+                n_x14 += 1
+        result = {"validations": out, "count": len(out)}
+        if n_x14:
+            result["note"] = (
+                "validations marked stored_as x14 live in Excel's extension "
+                "block (typically a list that points at another sheet). Cell "
+                "edits keep them exactly as they are; this tool cannot "
+                "change or remove them, so make those changes in Excel")
+        return result
 
     pkg = WorkbookPackage.open(path)
     warnings: list[str] = []
 
     if action == "add":
         from openpyxl.worksheet.datavalidation import DataValidation
-        if dv_type not in DV_TYPES:
-            raise XlMcpError(f"dv_type must be one of {DV_TYPES}")
+        dv_type = _vocab.to_file(dv_type, _vocab.DV_TYPES, "dv_type")
         grid = pkg.resolve(location, default_sheet=sheet)
         ws = pkg.workbook[grid.sheet]
         f1, f2 = formula1, formula2
@@ -112,15 +144,18 @@ def manage_data_validation(path: str, action: str, location: Any = None,
         else:
             if op is None:
                 op = "between" if formula2 is not None else "greaterThan"
-            if op not in _OPERATORS:
-                raise XlMcpError(f"operator must be one of {_OPERATORS}")
+            op = _vocab.to_file(op, _vocab.OPERATORS, "operator")
             if f1 is None:
                 raise XlMcpError(
                     f"{dv_type} validation needs formula1 (a bound)")
+            # A bound is stored bare, as Excel stores it (=$C$2 was kept with
+            # its '=' and Excel reads that as a different formula).
+            f1, f2 = (v[1:] if isinstance(v, str) and v.startswith("=") else v
+                      for v in (f1, f2))
         # A formula1 long enough to stop the FILE from opening is a hard
         # refusal, separate from the 255-character authoring warning above:
-        # a 10,000-item inline list produces a workbook that would not open
-        # (core.limits).
+        # a 10,000-item inline list produced a workbook that
+        # returned ok/saved/verified and would not open (core.limits).
         _limits.check_dv_formula(f1, field="formula1")
         _limits.check_dv_formula(f2, field="formula2")
         for label, msg in (("prompt", prompt), ("error", error)):
@@ -136,10 +171,14 @@ def manage_data_validation(path: str, action: str, location: Any = None,
             dv.prompt = prompt
             dv.promptTitle = "Input"
             dv.showInputMessage = True
+        # Excel's own new rule shows its error alert
+        # (and so refuses an invalid entry) and its input message; openpyxl's
+        # defaults were off, so any typed value was accepted.
+        dv.showErrorMessage = True
+        dv.showInputMessage = True
         if error:
             dv.error = error
             dv.errorTitle = "Invalid"
-            dv.showErrorMessage = True
         dv.add(grid.a1)
         ws.add_data_validation(dv)
         pkg._changed["data_validation"] = {

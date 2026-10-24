@@ -1,13 +1,15 @@
 """Guarded execution of CALLER-SUPPLIED regex patterns.
 
-A valid but pathological pattern
+Ported from KitchenSink4Word ops/_regex.py (moved into core/ here, since the
+grid ops families all consume it). A valid but pathological pattern
 ((a+)+c against long 'aaaa...' text) can backtrack for hours; the server is
 single-threaded stdio, so one bad pattern denies service to the whole
 session. Every user-supplied pattern therefore runs through the `regex`
 module with a hard timeout. Internal patterns built from re.escape() are
 safe and keep using stdlib re.
 
-Used by find_cells, replace_cells, and the search location selector.
+Used by find_cells, replace_cells, and the search location selector; the
+guard exists before any search path does.
 """
 
 from __future__ import annotations

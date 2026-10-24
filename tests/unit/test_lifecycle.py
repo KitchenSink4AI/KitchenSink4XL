@@ -12,10 +12,10 @@ import openpyxl
 import pytest
 
 from xlsx_mcp.core.errors import (
-    HazardRefused, TargetNotFound, XlMcpError)
+    HazardRefused, TargetNotFound, WorkbookNotFound, XlMcpError)
 from xlsx_mcp.ops import lifecycle
 
-CORPUS = Path(__file__).resolve().parents[1] / "fixtures" / "samples"
+CORPUS = Path(__file__).resolve().parents[1] / "fixtures" / "workbooks"
 
 
 def _md5(p) -> str:
@@ -61,9 +61,14 @@ def test_copy_workbook_is_byte_identical(tmp_path):
 
 
 def test_copy_missing_source_refuses(tmp_path):
-    with pytest.raises(TargetNotFound):
+    """A missing source is a missing workbook (it waits out another save's
+    swap first, then answers), and a caller sees NOT_FOUND either way."""
+    from xlsx_mcp import envelope
+    with pytest.raises(WorkbookNotFound) as info:
         lifecycle.copy_workbook(str(tmp_path / "nope.xlsx"),
                                 str(tmp_path / "out.xlsx"))
+    assert envelope.classify(info.value) == "NOT_FOUND"
+    assert not (tmp_path / "out.xlsx").exists()
 
 
 # --------------------------------------------------------------- metadata
@@ -97,13 +102,19 @@ def test_diagnose_clean_and_hazardous(tmp_path):
     d = lifecycle.diagnose_workbook(str(p))
     assert d["readable"] and d["hazards"]["clean"] is True
     assert d["health"]["formula_cells"] == 1
-    assert d["routing"]["surgical_edit"]["route"] == "openpyxl"
+    # Cell edits keep the rest of the file byte-for-byte on every workbook
+    # the splice can read, clean or not (core/surgical.py).
+    assert d["routing"]["surgical_edit"]["route"] == "raw_ooxml"
+    assert d["routing"]["structural_edit"]["route"] == "openpyxl"
 
     src = tmp_path / "sl.xlsx"
     shutil.copy(CORPUS / "pivot_slicer.xlsx", src)
     d2 = lifecycle.diagnose_workbook(str(src))
     assert d2["hazards"]["would_lose"] is True
     assert "slicers" in [h["key"] for h in d2["hazards"]["hazards"]]
+    assert d2["routing"]["surgical_edit"]["route"] == "raw_ooxml"
+    assert d2["routing"]["structural_edit"]["route"] == "refuse"
+    assert "slicers" in d2["routing"]["structural_edits"]["would_lose"]
 
 
 # --------------------------------------------------------- manage_worksheet

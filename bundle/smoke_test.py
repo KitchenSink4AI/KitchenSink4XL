@@ -91,7 +91,7 @@ def main() -> int:
             cfg.get("args") == [expected_arg],
             str(cfg.get("args")),
         )
-        check("no tools array (Smithery bug #787)", "tools" not in m)
+        check("no tools array (Smithery registry constraint)", "tools" not in m)
         check("license is AGPL-3.0-only",
               m.get("license") == "AGPL-3.0-only", str(m.get("license")))
 
@@ -114,6 +114,10 @@ def main() -> int:
         check("allowed folder is wired to KS4XL_ALLOWED_ROOTS",
               env.get("KS4XL_ALLOWED_ROOTS") == "${user_config.allowed_root}",
               str(env.get("KS4XL_ALLOWED_ROOTS")))
+        check("env carries only the two settings and the bundle install route",
+              env == {"KS4XL_VERIFY_COM": "${user_config.verify_with_excel}",
+                      "KS4XL_ALLOWED_ROOTS": "${user_config.allowed_root}",
+                      "KS4XL_INSTALL_ROUTE": "mcpb"}, str(env))
 
         # 3. mcpb validate, if available
         mcpb_cli = shutil.which("mcpb")

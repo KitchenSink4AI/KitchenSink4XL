@@ -67,9 +67,9 @@ body:
     id: environment
     attributes:
       label: Environment
-      placeholder: "Windows 11, Python 3.12, Excel 365 (com pack only)"
+      placeholder: "Windows 11, Python 3.12, Excel 365"
   - type: input
-    id: packs
+    id: settings
     attributes:
-      label: Which packs were enabled?
-      placeholder: "lite only / lite + design / KS4XL_MODE=full"
+      label: Which launch settings are set?
+      placeholder: "none / KS4XL_READ_ONLY=1 / KS4XL_FORBID=..."

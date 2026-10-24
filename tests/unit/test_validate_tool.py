@@ -1,4 +1,4 @@
-"""validate tests: the default battery, each check's pass and findings
+"""validate tests: the default checks, each check's pass and findings
 paths (structure, references, names, merges, tables, formatting_bloat,
 hazards, external_links, calc_staleness), the verbatim underlying-op
 shapes, and the refusal paths.
@@ -46,10 +46,10 @@ def _patch_cached_value(path: str, formula_snippet: str, cached: str) -> None:
     shutil.move(tmp, path)
 
 
-# ------------------------------------------------------------ the battery
+# ------------------------------------------------------- the default checks
 
 
-def test_default_battery_on_clean_workbook(tmp_path):
+def test_default_checks_on_clean_workbook(tmp_path):
     p = _make(tmp_path)
     out = _validation.validate(p)
     assert out["passed"] is True
@@ -82,8 +82,8 @@ def test_structure_clean_and_corrupt(tmp_path):
     out = _validation.validate(p, checks=["structure"])
     f = out["results"]["structure"]["findings"]
     # opens_clean is Excel's verdict, and nothing asked Excel here: the field
-    # says so rather than claiming a pass openpyxl cannot vouch for (files
-    # Excel refuses must not be reported opens_clean:true).
+    # says so rather than claiming a pass openpyxl cannot vouch for (ten workbooks Excel refused were reported opens_clean:true
+    # because the field was hard-coded).
     assert f["opens_clean"] == _validation.NOT_CHECKED
     assert f["openpyxl_loads"] is True and f["visible_sheets"] == 1
     assert "Excel was NOT asked" in f["opens_clean_source"]
@@ -113,7 +113,14 @@ def test_calc_staleness_flags_uncached_then_clears(tmp_path):
     assert "blank" in c["findings"]["note"]
     _patch_cached_value(p, "SUM(1,2)", "3")
     out = _validation.validate(p, checks=["calc_staleness"])
-    assert out["results"]["calc_staleness"]["passed"] is True
+    c = out["results"]["calc_staleness"]
+    assert c["findings"]["count"] == 0
+    # A stored result is never reported fresh without proof. The
+    # file still carries the recalculate-on-open flag the formula write
+    # set, so a recalculation is pending, not passed.
+    assert c["passed"] is not True
+    assert c["findings"]["freshness"] == "recalculation pending"
+    assert "recalculate" in c["findings"]["how_to_verify"]
 
 
 def test_names_check_finds_broken_defined_names(tmp_path):
@@ -238,7 +245,7 @@ def test_external_links_check_clean(tmp_path):
     assert {"links", "count", "note"} <= set(r["findings"])  # verbatim
 
 
-def test_full_battery_all_checks(tmp_path):
+def test_every_check_at_once(tmp_path):
     p = _make(tmp_path)
     out = _validation.validate(p, checks=list(_validation.CHECK_NAMES))
     assert set(out["results"]) == set(_validation.CHECK_NAMES)

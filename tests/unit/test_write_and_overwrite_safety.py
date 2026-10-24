@@ -1,11 +1,13 @@
-"""Regressions for write, export and overwrite safety.
+"""Regressions for write, overwrite and recovery safety.
 
-Covers: out_file self-clobber, leading-apostrophe sheet names, sort vs
-filter-hidden rows, aggregate coercion, KS4XL_PACK_POLICY fail-open,
-write_range docstring drift, export overwrite behavior, create/copy
-overwrite with no backup, restore validating too little, promote-failure
-burning prev, byte-range-lock misdiagnosis, the allow_loss dead end, and
-recovery discoverability.
+Each test is built from the exact repro of the defect it covers:
+- out_file self-clobber, leading-apostrophe sheet names, sort vs
+  filter-hidden rows, aggregate coercion, KS4XL_PACK_POLICY fail-open,
+  write_range docstring drift, plus smaller items;
+- export overwrite class, create/copy overwrite with no backup, restore
+  validating too little, promote-failure burning prev, byte-range-lock
+  misdiagnosis, allow_loss dead-end, recovery discoverability, plus
+  smaller items.
 """
 
 from __future__ import annotations
@@ -147,7 +149,7 @@ class TestOverwriteRotatesBeforeClobber:
         slot = safesave.slot_dir(victim) / safesave.PREV_SLOT
         assert slot.exists()
         assert slot.read_bytes() == before
-        # and the restore round-trip brings the original back
+        # and the restore round-trip brings the heirloom back
         backups_ops.restore_backup(str(victim), "prev")
         assert victim.read_bytes() == before
 
@@ -206,12 +208,12 @@ class TestSheetNameApostrophe:
 
 
 # ======================================================================
-# restore must validate like the verify gate
+# Restore must validate like the verify gate
 # ======================================================================
 
 
 def _head_trashed(payload: bytes) -> bytes:
-    """A torn-write corruption shape: intact central directory,
+    """The exact corruption shape: intact central directory,
     zeroed local headers (torn write / bad sector)."""
     return b"\x00" * 4096 + payload[4096:]
 
@@ -264,7 +266,7 @@ class TestRestoreValidation:
 
 
 # ======================================================================
-# a failed promote must not burn the prev undo slot
+# A failed promote must not burn the prev undo slot
 # ======================================================================
 
 
@@ -275,18 +277,20 @@ class TestPromoteFailureKeepsPrev:
         slot = safesave.slot_dir(book) / safesave.PREV_SLOT
         prev_before = slot.read_bytes()  # state before the B mutation
 
-        real_replace = safesave.replace_with_retry
+        # The workbook is put in place by safesave.promote
+        # (ReplaceFileW); the slots still rotate with replace_with_retry.
+        real_promote = safesave.promote
         target = os.path.normcase(os.path.abspath(str(book)))
 
-        def failing_replace(src, dst):
+        def failing_promote(src, dst, **kw):  # promote takes the ticket
             if os.path.normcase(os.path.abspath(os.fspath(dst))) == target:
                 raise PermissionError("simulated: file grabbed at promote")
-            return real_replace(src, dst)
+            return real_promote(src, dst, **kw)
 
-        monkeypatch.setattr(safesave, "replace_with_retry", failing_replace)
+        monkeypatch.setattr(safesave, "promote", failing_promote)
         with pytest.raises(WorkbookLocked):
             cells_ops.set_cell(str(book), {"cell": "A1"}, "C")
-        monkeypatch.setattr(safesave, "replace_with_retry", real_replace)
+        monkeypatch.setattr(safesave, "promote", real_promote)
 
         # the refusal is honest AND the undo slot still holds the pre-B
         # state; before the fix it held a copy of the CURRENT content
@@ -300,7 +304,7 @@ class TestPromoteFailureKeepsPrev:
 
 
 # ======================================================================
-# a byte-range-locked healthy file is NOT "corrupt"
+# A byte-range-locked healthy file is NOT "corrupt"
 # ======================================================================
 
 
@@ -331,7 +335,8 @@ class TestLockedNotCorrupt:
         openpyxl.load_workbook(book).close()
 
     def test_head_trashed_mutation_says_workbook_corrupt(self, tmp_path):
-        # the mutation path promises WorkbookCorrupt, not a raw BadZipFile
+        # The mutation path promised WorkbookCorrupt, not a
+        # raw BadZipFile
         from xlsx_mcp.core.package import WorkbookPackage
         book = _make_book(tmp_path / "b.xlsx", [["x", 1]])
         book.write_bytes(_head_trashed(book.read_bytes()))
@@ -384,7 +389,7 @@ class TestDiskFullHonesty:
 # allow_loss dead-end and inconsistent loss scope
 # ======================================================================
 
-_CORPUS = Path(__file__).resolve().parent.parent / "fixtures" / "samples"
+_CORPUS = Path(__file__).resolve().parent.parent / "fixtures" / "workbooks"
 
 
 def _inject(src: Path, dst: Path, extra: dict[str, bytes]) -> Path:
@@ -416,8 +421,9 @@ def _threaded_parts() -> dict[str, bytes]:
 
 
 class TestAllowLossScope:
+    @pytest.mark.usefixtures("rewrite_route")
     def test_mixed_file_allow_loss_remedy_now_works(self, tmp_path):
-        # the legacy-file shape: drop-class content (threaded comments, a VML
+        # the heirloom shape: drop-class content (threaded comments, a VML
         # anchor) PLUS degrade-class chart sub-parts. The gate refuses
         # without allow_loss; WITH allow_loss the advertised remedy must
         # actually succeed instead of dead-ending in VALIDATION_FAILED on
@@ -440,16 +446,22 @@ class TestAllowLossScope:
         slot = safesave.slot_dir(book) / safesave.PREV_SLOT
         assert slot.read_bytes() == before
 
+    @pytest.mark.usefixtures("rewrite_route")
     def test_degrade_only_loss_is_scoped_not_blanket(self, tmp_path):
         # the H4 shape: chart sub-parts, NO drop-class content. Without
-        # allow_loss the verify gate still refuses the sub-part loss
-        # (fail-safe); with allow_loss it proceeds under the SAME scoped
-        # amnesty as the mixed file (no more blanket-None inconsistency).
+        # allow_loss the save refuses the sub-part loss; the hazard gate now
+        # names it before anything is written (it used to
+        # surface only as a bare verify failure with no route). With
+        # allow_loss it proceeds under the SAME scoped amnesty as the mixed
+        # file (no more blanket-None inconsistency).
+        from xlsx_mcp.core.errors import HazardRefused
         book = _inject(_CORPUS / "chart.xlsx", tmp_path / "h4.xlsx",
                        _CHART_EXTRAS)
         before = book.read_bytes()
-        with pytest.raises(ValidationFailed):
+        with pytest.raises((ValidationFailed, HazardRefused)) as ei:
             cells_ops.set_cell(str(book), {"cell": "A1"}, "edit")
+        if isinstance(ei.value, HazardRefused):
+            assert "charts" in str(ei.value) and "allow_loss=true" in str(ei.value)
         assert book.read_bytes() == before
         r = cells_ops.set_cell(str(book), {"cell": "A1"}, "edit",
                                allow_loss=True)
@@ -476,7 +488,7 @@ class TestAllowLossScope:
 
 
 # ======================================================================
-# recovery discoverability for a panicked non-developer
+# Recovery discoverability for a panicked non-developer
 # ======================================================================
 
 
@@ -498,8 +510,10 @@ class TestRecoveryDiscoverability:
     def test_recover_workflow_exists_and_speaks_plainly(self):
         from xlsx_mcp.ops import workflows
         wf = workflows.get_workflows("recover-workbook")
-        tools = [s["tool"] for s in wf["steps"]]
-        assert tools[0] == "manage_backups"
+        # Family surface: a served step names the tool and the op.
+        ops = [s["op"] for s in wf["steps"]]
+        assert ops[0] == "manage_backups"
+        assert wf["steps"][0]["tool"] == "xl_workbook"
         text = str(wf)
         assert "prev" in text and "anchor" in text
         # the inherent limit is documented loudly
@@ -527,7 +541,7 @@ class TestRecoveryDiscoverability:
 
 
 # ======================================================================
-# sort must respect filter-hidden rows
+# Sort must respect filter-hidden rows (COM ground truth)
 # ======================================================================
 
 
@@ -542,7 +556,7 @@ _FILTER_DATA = [["Name", "Region", "Amount"],
 class TestSortVsHiddenRows:
     def test_filter_hidden_rows_stay_pinned(self, tmp_path):
         # exact repro: filter Region=eq=East (hides Bob/Dana/Eve), then
-        # sort by Amount desc. Excel: only
+        # sort by Amount desc. Excel (COM ground truth): only
         # the visible rows sort (Carol 30 above Alice 10); hidden rows
         # keep their data and their positions.
         book = _make_book(tmp_path / "f.xlsx", _FILTER_DATA)
@@ -585,7 +599,7 @@ class TestSortVsHiddenRows:
 
 
 # ======================================================================
-# aggregates follow Excel (text/booleans ignored)
+# Aggregates follow Excel (text/booleans ignored)
 # ======================================================================
 
 
@@ -614,7 +628,7 @@ class TestAggregateExcelSemantics:
                 {"column": "V", "func": "min"},
                 {"column": "V", "func": "max"}])
         aggs = r["groups"][0]["aggregates"]
-        # verified against Excel: SUM ignores "007", TRUE,
+        # Excel ground truth (COM): SUM ignores "007", TRUE,
         # "text", "2024-01-15"; = 0.1+0.2-5+1e15
         assert aggs["sum_V"] == pytest.approx(999999999999995.3)
         assert aggs["avg_V"] == pytest.approx(999999999999995.3 / 4)
@@ -642,29 +656,8 @@ class TestAggregateExcelSemantics:
 # ======================================================================
 
 
-class TestPackPolicyFailsClosed:
-    def test_typo_refuses(self, monkeypatch):
-        from xlsx_mcp import packs
-        monkeypatch.setenv("KS4XL_PACK_POLICY", "lockedd")
-        with pytest.raises(XlMcpError):
-            packs.pack_policy()
-        with pytest.raises(XlMcpError):
-            packs.apply_startup_mode()
-        with pytest.raises(XlMcpError):
-            packs.enable(["io"])
-
-    def test_valid_values_still_work(self, monkeypatch):
-        from xlsx_mcp import packs
-        monkeypatch.setenv("KS4XL_PACK_POLICY", "auto")
-        assert packs.pack_policy() == "auto"
-        monkeypatch.setenv("KS4XL_PACK_POLICY", "LOCKED")
-        assert packs.pack_policy() == "locked"
-        monkeypatch.delenv("KS4XL_PACK_POLICY")
-        assert packs.pack_policy() == "auto"
-
-
 # ======================================================================
-# a bare "=" is text, and is REPORTED as text
+# A bare "=" is text, and is REPORTED as text
 # ======================================================================
 
 
@@ -716,7 +709,7 @@ class TestSetFilterUnknownKeys:
         r = sortfilter.set_filter(
             str(book), {"range": "A1:C6"},
             criteria=[{"column": "Region", "op": "not_blank"}])
-        assert r["changed"]["filter"]["rows_hidden"] == 0
+        assert r["changed"]["filter"]["data_rows_hidden"] == 0
 
 
 # ======================================================================
@@ -726,35 +719,33 @@ class TestSetFilterUnknownKeys:
 
 class TestGatedRefusalEnvelope:
     def test_disabled_and_unknown_tool_refusals_are_enveloped(self):
+        """Family surface: packs are gone, so a tool is never 'disabled'; a
+        tool the launch settings removed and a name that never existed both
+        still refuse in the closed-code envelope, never as a bare transport
+        error."""
         import asyncio
+        import json
+
         from fastmcp import Client
-        from fastmcp.exceptions import ToolError
-        from fastmcp.server.transforms.visibility import Visibility
+
         from xlsx_mcp import server
+        from xlsx_mcp.settings import Settings
 
         async def run():
-            transform = Visibility(
-                False, names=server._startup_disabled_names())
-            server.mcp.add_transform(transform)
             out = {}
-            try:
-                async with Client(server.mcp) as c:
-                    with pytest.raises(ToolError) as e1:
-                        await c.call_tool("manage_chart", {
-                            "path": "x.xlsx", "action": "list"})
-                    out["disabled"] = str(e1.value)
-                    with pytest.raises(ToolError) as e2:
-                        await c.call_tool("no_such_tool_xyz", {})
-                    out["unknown"] = str(e2.value)
-            finally:
-                server.mcp._transforms.remove(transform)
+            async with Client(server.create_server(Settings(forbid=("xl_format",)))) as c:
+                r1 = await c.call_tool_mcp("xl_format", {
+                    "op": "manage_chart", "args": {"path": "x.xlsx", "action": "list"}})
+                out["disabled"] = (r1.isError, r1.content[0].text)
+                r2 = await c.call_tool_mcp("no_such_tool_xyz", {})
+                out["unknown"] = (r2.isError, r2.content[0].text)
             return out
 
         out = asyncio.run(run())
-        # the disabled refusal keeps its excellent content AND the shape
-        assert '"code":"NOT_FOUND"' in out["disabled"]
-        assert "enable_tools(packs=['design'])" in out["disabled"]
-        assert '"hint"' in out["disabled"]
-        # the unknown-tool refusal is enveloped too
-        assert '"code":"NOT_FOUND"' in out["unknown"]
-        assert '"hint"' in out["unknown"]
+        for key, code in (("disabled", "NOT_AVAILABLE"), ("unknown", "NOT_FOUND")):
+            is_error, text = out[key]
+            payload = json.loads(text)
+            assert is_error and payload["error"]["code"] == code, (key, text)
+            assert payload["error"]["hint"]
+        assert json.loads(out["disabled"][1])["error"]["details"]["decided_by"]
+        assert "xl_read" in json.loads(out["unknown"][1])["error"]["details"]["tools"]

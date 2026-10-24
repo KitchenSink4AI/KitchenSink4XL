@@ -28,14 +28,13 @@ for reading and reports.
 from __future__ import annotations
 
 import codecs
-import os
 import struct
 import zipfile
 from typing import Any
-from xml.etree.ElementTree import fromstring
 
 from ..core import hazard as _hazard
-from ..core.errors import WorkbookCorrupt, WorkbookNotFound, XlMcpError
+from ..core import xmlsafe as _xmlsafe
+from ..core.errors import WorkbookCorrupt, XlMcpError
 from ..core.sandbox import check_path
 from . import gridio
 
@@ -47,17 +46,22 @@ _MAX_CACHED_CELLS_PER_LINK = 100
 
 def _open_zip(path: str) -> zipfile.ZipFile:
     p = check_path(path, "open workbook")
-    if not os.path.exists(p):
-        raise WorkbookNotFound(f"no such workbook: {p}")
+    from ..core import swapwait as _swapwait
+    _swapwait.require_workbook(p, f"no such workbook: {p}")
     # Modern .xls files embed a zip fragment, so the zip open below can
     # SUCCEED on a BIFF file and misread the theme package as the workbook;
-    # the OLE sniff refuses first with the format and the remedy
-    
+    # the OLE sniff refuses first with the format and the remedy.
     _hazard.refuse_ole_container(p)
     try:
-        return zipfile.ZipFile(p)
+        zf = zipfile.ZipFile(p)
     except zipfile.BadZipFile:
         raise WorkbookCorrupt(f"{p}: not a valid zip / OOXML package")
+    try:
+        _xmlsafe.check_package(zf, doc=p)
+    except BaseException:
+        zf.close()
+        raise
+    return zf
 
 
 # --------------------------------------------------------- external links
@@ -83,7 +87,7 @@ def get_external_links(path: str) -> dict:
             target = None
             if rels_part in names:
                 try:
-                    rroot = fromstring(zf.read(rels_part))
+                    rroot = _xmlsafe.fromstring(zf.read(rels_part), part=rels_part)
                     for rel in rroot.iter(f"{_PKG_REL_NS}Relationship"):
                         target = rel.get("Target")
                         break
@@ -91,7 +95,7 @@ def get_external_links(path: str) -> dict:
                     target = None
             entry: dict[str, Any] = {"part": part, "target": target}
             try:
-                root = fromstring(zf.read(part))
+                root = _xmlsafe.fromstring(zf.read(part), part=part)
             except Exception:  # noqa: BLE001
                 entry["note"] = "link part XML could not be parsed"
                 links.append(entry)
@@ -368,6 +372,27 @@ def _parse_dir_stream(data: bytes) -> list[dict]:
     return modules
 
 
+def _xlm_summary(path: str) -> dict:
+    """Excel 4.0 macro sheets and macro names: a workbook can hold
+    macros with no VBA project at all."""
+    from ..core import pkginfo as _pkginfo
+    try:
+        kinds = _pkginfo.sheet_kinds(path)
+        names = _pkginfo.xlm_macro_names(path)
+    except Exception:  # noqa: BLE001
+        return {}
+    sheets = [t for t, k in kinds.items() if k == "macrosheet"]
+    if not sheets and not names:
+        return {}
+    out: dict[str, Any] = {"xlm_macro_sheets": sheets}
+    if names:
+        out["xlm_macro_names"] = names
+        auto = [n for n in names if n.lower().startswith("auto_")]
+        if auto:
+            out["xlm_auto_run_names"] = auto
+    return out
+
+
 def inspect_vba(path: str) -> dict:
     """Presence, size, and (when parseable) module names of the VBA
     project. Strictly read-only."""
@@ -375,8 +400,18 @@ def inspect_vba(path: str) -> dict:
         names = zf.namelist()
         vba_parts = [n for n in names
                      if n.rsplit("/", 1)[-1].lower() == "vbaproject.bin"]
+        xlm = _xlm_summary(path)
         if not vba_parts:
-            return {"has_vba": False, "note": "no vbaProject.bin part"}
+            if xlm:
+                return {"has_vba": False, "has_macros": True, **xlm,
+                        "note": "no VBA project, but this workbook holds "
+                                "Excel 4.0 (XLM) macros: "
+                                + ", ".join(xlm["xlm_macro_sheets"])
+                                + ". Nothing here ever runs them; cell edits "
+                                "keep the macro sheets exactly as they are"}
+            return {"has_vba": False, "has_macros": False,
+                    "note": "no vbaProject.bin part and no Excel 4.0 macro "
+                            "sheets"}
         part = vba_parts[0]
         data = zf.read(part)
         declared = False
@@ -386,7 +421,8 @@ def inspect_vba(path: str) -> dict:
         except KeyError:
             pass
         out: dict[str, Any] = {
-            "has_vba": True, "part": part, "size": len(data),
+            "has_vba": True, "has_macros": True, **xlm,
+            "part": part, "size": len(data),
             "declared_content_type": declared,
             "extension_matches": path.lower().endswith(
                 (".xlsm", ".xltm", ".xlam")),
@@ -394,7 +430,7 @@ def inspect_vba(path: str) -> dict:
         if not out["extension_matches"]:
             out["warning"] = (
                 "vbaProject.bin inside a non-macro extension; a file-based "
-                "save cannot preserve it (keep_vba binds to .xlsm)")
+                "save cannot preserve it (the VBA project is kept only for .xlsm and .xltm)")
         try:
             cfb = _Cfb(data)
             dir_stream = cfb.read_stream("dir")
@@ -483,7 +519,7 @@ def get_pivot(path: str, sheet: str | None = None) -> dict:
             "pivots": pivots, "count": len(pivots),
             "note": ("description only: pivot creation, modification, and "
                      "refresh need the Excel application "
-                     "(com_manage_pivot, com pack)"
+                     "(com_manage_pivot, xl_app)"
                      if pivots else "no pivot tables"),
         }
     finally:
@@ -505,7 +541,8 @@ def get_connections(path: str) -> dict:
         conns: list[dict] = []
         if "xl/connections.xml" in names:
             try:
-                root = fromstring(zf.read("xl/connections.xml"))
+                root = _xmlsafe.fromstring(zf.read("xl/connections.xml"),
+                                            part="xl/connections.xml")
             except Exception:  # noqa: BLE001
                 root = None
             if root is not None:
@@ -556,7 +593,7 @@ def get_connections(path: str) -> dict:
         "sensitive": bool(conns or pq_evidence),
         "note": ("connection strings can embed server names and "
                  "credentials; treat as sensitive. Refresh needs the Excel "
-                 "application (com pack)" if conns or pq_evidence
+                 "application (xl_app)" if conns or pq_evidence
                  else "no data connections"),
     }
 

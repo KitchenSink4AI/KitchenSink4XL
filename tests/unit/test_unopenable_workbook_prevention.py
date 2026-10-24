@@ -1,12 +1,13 @@
-"""Regressions for inputs that would produce a workbook Excel refuses to open.
+"""Standing regressions for the unopenable-workbook findings.
 
-One test per case, each carrying the exact payload, so none can come back
-silently. The common theme: the safety core could write a workbook Excel
-refuses to open, report ok/saved/verified, and claim the file was fine.
+One test per finding, each carrying its EXACT payload, so none of the
+twenty can come back silently. The headline was a single theme with
+ten routes: the safety core would write a workbook Excel refuses to open,
+report ok/saved/verified, and then tell you the file was fine.
 
-Expected values are Excel's own, verified against Excel (recorded next to
-each constant in core/calc.py, core/arrays.py and core/limits.py), not
-taken from what the code happens to do.
+Expected values are Excel's own, taken from the COM ground-truth probes run
+for these cases (recorded next to each constant in core/calc.py,
+core/arrays.py and core/limits.py), not from what the code happens to do.
 """
 
 from __future__ import annotations
@@ -59,7 +60,7 @@ def _book(tmp_path, name="t.xlsx", sheets=("Data",)):
 
 
 def _cse_book(tmp_path, name="cse.xlsx"):
-    """The round's legacy Ctrl+Shift+Enter corpus shape: a multi-cell array
+    """The legacy Ctrl+Shift+Enter corpus shape: a multi-cell array
     over B1:B5 and a single-cell one at C1, with no xl/metadata.xml, which is
     why the dynamic-array hazard gate never saw it."""
     p = tmp_path / name

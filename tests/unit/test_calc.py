@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from xlsx_mcp.core import calc
 
-CORPUS = ROOT / "tests" / "fixtures" / "samples"
+CORPUS = ROOT / "tests" / "fixtures" / "workbooks"
 
 
 def test_xlfn_prefixes_modern_functions():

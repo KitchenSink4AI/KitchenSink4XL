@@ -1,7 +1,7 @@
 """ops/structure.py: modify_grid_structure, THE structural-edit tool.
 
 Insert or delete rows and columns at a location. This is the flagship use of
-the reference-rewriting core: openpyxl shifts
+the reference-rewriting core (core.refs): openpyxl shifts
 the cell grid, then rewrite_workbook repairs every reference that points at or
 across the change: formula cells on every sheet (cross-sheet refs included),
 defined names, conditional-format and data-validation ranges, table refs, and
@@ -25,7 +25,7 @@ from openpyxl.utils import column_index_from_string, get_column_letter
 
 from ..core import arrays as _arrays
 from ..core import refs as _refs
-from ..core.errors import RangeOutOfBounds, XlMcpError
+from ..core.errors import RangeOutOfBounds, UnsupportedStructure, XlMcpError
 from ..core.package import WorkbookPackage
 from . import gridio
 
@@ -34,6 +34,50 @@ ACTIONS = (_refs.INSERT_ROWS, _refs.DELETE_ROWS,
 
 _ROW_ACTIONS = (_refs.INSERT_ROWS, _refs.DELETE_ROWS)
 _COL_LETTER = re.compile(r"[A-Za-z]{1,3}")
+_COL_SPAN = re.compile(r"([A-Za-z]{1,3}):([A-Za-z]{1,3})")
+_ROW_SPAN = re.compile(r"(\d+):(\d+)")
+
+
+def _action_text(action: Any, at: Any) -> str:
+    """The refusal for an action that is not one of the four. A bare
+    'insert' or 'delete' (3 of a weaker model's 17 misses in testing) does not
+    say rows or columns, so the message gives both words and, from the shape
+    of `at`, the call that was probably meant."""
+    base = f"action must be one of {ACTIONS}, got {action!r}"
+    verb = str(action).strip().lower()
+    if verb not in ("insert", "delete"):
+        return base
+    other = "delete" if verb == "insert" else "insert"
+    tok = at.strip() if isinstance(at, str) else at
+    if isinstance(tok, int) and not isinstance(tok, bool) or (
+            isinstance(tok, str) and tok.isdigit()):
+        example = f'action="{verb}_rows", at={int(tok)}'
+    elif isinstance(tok, str) and (_COL_LETTER.fullmatch(tok) or _COL_SPAN.fullmatch(tok)):
+        first = tok.split(":")[0].upper()
+        example = f'action="{verb}_cols", at="{first}"'
+    else:
+        example = f'action="{verb}_rows", at=4 (or action="{verb}_cols", at="B")'
+    return (f"action {action!r} does not say rows or columns: use {verb}_rows or "
+            f"{verb}_cols ({other}_rows or {other}_cols for the other direction). "
+            f"For example {example}.")
+
+
+def _span_text(tok: str, m_cols, m_rows) -> str:
+    """`at` is where a change starts, one column or one row. A span
+    such as 'B:B' (a whole-column reference, as Excel writes it) says it
+    twice over; the message turns it into at and count."""
+    if m_cols is not None:
+        a, b = m_cols.group(1).upper(), m_cols.group(2).upper()
+        n = abs(column_index_from_string(b) - column_index_from_string(a)) + 1
+        start = min(a, b, key=column_index_from_string)
+        return (f"at is where the change starts, one column or one row, and {tok!r} is "
+                f"a span. For columns give the column letter, {start!r} here (at=\"{start}\"), "
+                f"and put how many in count (count={n}); for rows give a row number.")
+    a, b = int(m_rows.group(1)), int(m_rows.group(2))
+    n, start = abs(b - a) + 1, min(a, b)
+    return (f"at is where the change starts, one column or one row, and {tok!r} is a "
+            f"span. For rows give the row number, {start} here (at={start}), and put "
+            f"how many in count (count={n}); for columns give the column letter.")
 
 
 def _resolve_at(pkg: WorkbookPackage, at: Any, action: str,
@@ -64,6 +108,9 @@ def _resolve_at(pkg: WorkbookPackage, at: Any, action: str,
             raise XlMcpError(
                 f"'at' is the column letter {tok!r} but action {action!r} "
                 "works on rows; pass a row number (or a cell like 'A7')")
+        m_cols, m_rows = _COL_SPAN.fullmatch(tok), _ROW_SPAN.fullmatch(tok)
+        if m_cols is not None or m_rows is not None:
+            raise XlMcpError(_span_text(tok, m_cols, m_rows))
         # anything else: treat as an A1 string / location object
     grid = pkg.resolve(at, default_sheet=sheet)
     return grid.sheet, (grid.min_row if row_axis else grid.min_col)
@@ -76,7 +123,7 @@ def modify_grid_structure(path: str, action: str, at: Any, count: int = 1,
     """Insert or delete rows/columns and rewrite every reference so the
     workbook stays coherent. Backup + verify via WorkbookPackage."""
     if action not in ACTIONS:
-        raise XlMcpError(f"action must be one of {ACTIONS}, got {action!r}")
+        raise XlMcpError(_action_text(action, at))
     if isinstance(count, bool) or not isinstance(count, int) or count < 1:
         raise XlMcpError(f"count must be an integer >= 1, got {count!r}")
 
@@ -99,8 +146,17 @@ def modify_grid_structure(path: str, action: str, at: Any, count: int = 1,
     # delete_rows left the CSE workbook with NO <f> at all, both arrays
     # replaced by their stale literal values, no warning.
     # Excel refuses the identical Rows(n).Insert() / Delete() with "You can't
-    # change part of an array".
+    # change part of an array" (core.arrays, COM ground truth).
     _arrays.refuse_if_split(pkg.workbook[sheet_title], action, index, count)
+    # The same for a pivot table and a what-if data table: Excel refuses an
+    # insert or delete through either, and doing it here left a pivot or a
+    # data table whose definition no longer matched its cells.
+    conflict = _refs.split_conflict(pkg.workbook[sheet_title], action, index, count)
+    if conflict:
+        verb = "insert" if action in (_refs.INSERT_ROWS, _refs.INSERT_COLS) else "delete"
+        axis = "row" if action in _ROW_ACTIONS else "column"
+        raise UnsupportedStructure(
+            f"cannot {verb} {count} {axis}(s) at {index} on {sheet_title!r}: {conflict}")
     if action in (_refs.INSERT_ROWS, _refs.INSERT_COLS):
         # Excel refuses an insert that would push value-bearing cells off the
         # grid edge; mirror that instead of silently truncating.

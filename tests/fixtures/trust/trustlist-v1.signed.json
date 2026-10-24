@@ -1,0 +1,52 @@
+{
+  "key_id": "ks4-root-2026",
+  "list": {
+    "schema": 1,
+    "version": 1,
+    "issued_on": "2026-09-14",
+    "roots": [
+      {
+        "key_id": "ks4-root-2026",
+        "public_key": "l+4UyMpn3JgTqMHqEHljtmQI8T+h4gl+Yd4rp5rMoq0=",
+        "status": "active",
+        "retired_after": null
+      },
+      {
+        "key_id": "ks4-root-2026b",
+        "public_key": "BJTsvq+12XA7B7ZVZpo4BpoEusD+zrJIlGS0OCa1nIc=",
+        "status": "active",
+        "retired_after": null
+      }
+    ],
+    "intermediates": [
+      {
+        "key_id": "ks4-int-ent-2026",
+        "public_key": "WC+KducPR+dOOVqv3EtnSeFKu9nNeak2ChffX8g1Gd0=",
+        "status": "active",
+        "retired_after": null
+      },
+      {
+        "key_id": "ks4-int-web-2026",
+        "public_key": "D5LnCfbgQL2HFbY/1i4YT2RnBSSEkeXTtJggRh+j78g=",
+        "status": "active",
+        "retired_after": null
+      }
+    ],
+    "signing_keys": [
+      {
+        "key_id": "ks4-issuer-2026",
+        "public_key": "PQ376p/XqFTvNVerp7ABhBndu0yYyN/cWpeeMRmtj6g=",
+        "status": "active",
+        "retired_after": null
+      },
+      {
+        "key_id": "ks4-issuer-web-2026",
+        "public_key": "4OqvKRA5n3lyMTgJvxLplL2I0r6v7rIAuxh8rWOEcds=",
+        "status": "active",
+        "retired_after": null
+      }
+    ],
+    "retirements": []
+  },
+  "signature": "c+mQU9ZVI07pdDcZf8Yxwj/kVc2z9ZCqG03yd9qZBEcxsdqT0cbJMCRyJwdNVEXHaFdmViwiRXhafM34C91QAw=="
+}

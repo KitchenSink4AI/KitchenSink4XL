@@ -2,7 +2,7 @@
 
 set_workbook_properties covers the File > Info core properties (title,
 author, subject, keywords, category, comments) and the workbook calc
-settings the file tier handles: calculation mode and
+settings the file tier owns: calculation mode and
 the fullCalcOnLoad flag. Called with no settings it is a read-only report
 of both. The manual-mode caveat is stated wherever it applies: under
 calc_mode='manual' Excel will NOT refresh cached results on open, so every
@@ -16,14 +16,16 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..core import authorship as _authorship
 from ..core.errors import XlMcpError
 from ..core.package import WorkbookPackage
 from . import gridio
 
-CALC_MODES = ("auto", "autoNoTable", "manual")
-_CALC_ALIASES = {"auto": "auto", "automatic": "auto",
-                 "autonotable": "autoNoTable", "auto_no_table": "autoNoTable",
-                 "manual": "manual"}
+from ..core import vocab as _vocab
+
+#: snake_case values; autoNoTable still accepted.
+CALC_MODES = tuple(_vocab.CALC_MODES)
+_CALC_ALIASES = {"automatic": "auto"}
 
 MANUAL_MODE_CAVEAT = (
     "calc_mode='manual' means Excel will not recalculate on open; cached "
@@ -52,7 +54,7 @@ def _read_report(path: str) -> dict:
                 "last_modified_by": props.lastModifiedBy,
             },
             "calc": {
-                "calc_mode": mode,
+                "calc_mode": _vocab.from_file(mode, _vocab.CALC_MODES),
                 "full_calc_on_load": bool(
                     getattr(calc, "fullCalcOnLoad", False)),
                 "iterative_calc": bool(getattr(calc, "iterate", False)),
@@ -96,26 +98,34 @@ def set_workbook_properties(path: str, title: str | None = None,
 
     mode = None
     if calc_mode is not None:
-        mode = _CALC_ALIASES.get(str(calc_mode).lower())
-        if mode is None:
-            raise XlMcpError(
-                f"calc_mode must be one of {CALC_MODES}, got {calc_mode!r}")
+        mode = _vocab.to_file(_CALC_ALIASES.get(str(calc_mode).lower(), calc_mode),
+                              _vocab.CALC_MODES, "calc_mode")
 
     pkg = WorkbookPackage.open(path)
     wb = pkg.workbook
     props = wb.properties
     detail: dict[str, Any] = {}
+    notes: list[str] = []  # what an email address sent as the author earns
     for field, value in settings.items():
         if not isinstance(value, str):
             raise XlMcpError(f"{field} must be a string")
+        note = None
+        if field == "author" and "@" in value:
+            # An email address is never written as the author: the name that
+            # would sign a note stands in (core.authorship).
+            value, source, note = _authorship.signer_with_note(
+                value, _authorship.PROPERTY)
         target = {"author": "creator", "comments": "description"}.get(
             field, field)
         setattr(props, target, value)
         detail[field] = value
+        if note:
+            detail["author_source"] = source
+            notes.append(note)
     warnings: list[str] = []
     if mode is not None:
         wb.calculation.calcMode = mode
-        detail["calc_mode"] = mode
+        detail["calc_mode"] = _vocab.from_file(mode, _vocab.CALC_MODES)
         if mode == "manual":
             warnings.append(MANUAL_MODE_CAVEAT)
     if full_calc_on_load is not None:
@@ -132,7 +142,7 @@ def set_workbook_properties(path: str, title: str | None = None,
                 "silent wrong numbers, so use audit_formulas to check. A "
                 "circular formula written here has no seed value, and Excel "
                 "iterates from the cell's current value, so run recalculate "
-                "(com pack) after writing one or Excel shows #VALUE! until "
+                "(xl_app) after writing one or Excel shows #VALUE! until "
                 "the cell is re-entered by hand")
     if max_iterations is not None:
         n = int(max_iterations)
@@ -149,7 +159,7 @@ def set_workbook_properties(path: str, title: str | None = None,
     pkg._changed["properties"] = detail
     result = pkg.save(allow_loss=allow_loss, backup=backup,
                       verify_com=verify_com)
-    result["warnings"] = result.get("warnings", []) + warnings
+    result["warnings"] = [*notes, *result.get("warnings", []), *warnings]
     return result
 
 

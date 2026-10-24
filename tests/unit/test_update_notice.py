@@ -1,4 +1,4 @@
-"""The on-demand update notice: one surface, one call a day, honest output.
+"""The on-demand update report: one op, one call a week, honest output.
 
 Nothing here touches the network. Every test that would reach PyPI patches
 the fetch, and the tests that prove a path does NOT reach the network patch
@@ -17,8 +17,10 @@ The properties pinned:
    check is off, and performs no network, no cache read, no cache write.
 5. HOSTILE INPUT. Malformed, wrong-typed, and adversarial PyPI payloads
    never crash and never fabricate a version.
-6. ONE SURFACE. get_server_info is the only tool that can reach the
-   network. No other tool path fires the check.
+6. ON DEMAND, ONE OP. Called directly, get_server_info is the only op that
+   can reach the network; no other op fires the check. The weekly
+   background check starts only from the tool surface, after a call
+   (test_update_dialog.py).
 7. PRIVACY. The first report discloses that the check is a plain HTTPS GET
    to pypi.org, and the request carries no body and no identifier.
 """
@@ -91,10 +93,17 @@ def test_a_newer_release_produces_the_notice(monkeypatch):
 
 
 def test_the_running_build_being_current_says_so(monkeypatch):
-    monkeypatch.setattr(uc, "_fetch", _Counter(_payload(__version__)))
+    # A STABLE running build equal to PyPI's latest says current. (A .devN
+    # test build never equals a stable release, and the check deliberately
+    # ignores pre-releases, so the stable case is pinned explicitly; same fix
+    # as in the Word editor.)
+    from packaging.version import Version
+    running = Version(__version__).base_version
+    monkeypatch.setattr(uc, "current_version", lambda: running)
+    monkeypatch.setattr(uc, "_fetch", _Counter(_payload(running)))
     out = uc.status()
     assert out["state"] == "current"
-    assert out["latest_version"] == __version__
+    assert out["latest_version"] == running
     assert "install_note" not in out
 
 
@@ -320,10 +329,19 @@ def test_no_other_tool_path_fires_the_check(tmp_path, monkeypatch):
     assert counter.calls == 1
 
 
-def test_nothing_starts_a_thread(monkeypatch):
-    """The check runs on demand: the module offers no background starter."""
-    assert not hasattr(uc, "start_background_check")
-    assert "threading" not in dir(uc)
+def test_direct_calls_start_no_background_check(tmp_path, monkeypatch):
+    """Calling ops directly (no tool surface) never starts the weekly
+    background check: only the surface's after-call step does."""
+    import threading
+
+    monkeypatch.setattr(uc, "_fetch", _landmine)
+    name = f"{uc.LOGGER_NAME}-update-check"
+    before = sum(1 for t in threading.enumerate() if t.name == name)
+    book = str(tmp_path / "b.xlsx")
+    server.create_workbook(book)
+    server.get_workbook_metadata(book)
+    server.get_workflows()
+    assert sum(1 for t in threading.enumerate() if t.name == name) == before
 
 
 # ----------------------------------------------------------- 7. privacy

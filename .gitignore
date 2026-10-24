@@ -9,7 +9,7 @@ __pycache__/
 .ks4xl-backups/
 
 # Fixture build byproducts, never fixtures.
-tests/fixtures/samples/_*
+tests/fixtures/workbooks/_*
 
 # Build artifacts
 dist/

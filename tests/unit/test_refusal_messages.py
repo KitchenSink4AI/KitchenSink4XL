@@ -1,11 +1,11 @@
-"""Refusal-surface regressions.
+"""V1.1 refusal-surface regressions.
 
-The theme across all of them is that a refusal has to name what actually
-happened: a verdict that agrees with its payload, a codec name checked
-before it is used, a rotation range stated instead of enumerated, a device
-name identified as a device, an offset that refuses instead of clamping,
-and a column reference that reads as a column reference instead of a Python
-type error.
+Each test is its own repro. The theme across all of them is
+that a refusal has to name what actually happened: a verdict that agrees
+with its payload, a codec name checked before it is used, a rotation range
+stated instead of enumerated, a device name identified as a device, an
+offset that refuses instead of clamping, and a column reference that reads
+as a column reference instead of a Python type error.
 """
 
 from __future__ import annotations
@@ -31,7 +31,6 @@ def _book(path, rows, sheet="S"):
     return str(path)
 
 
-# ------------------------------------------------------------------- V1-6
 
 
 def test_validate_references_fails_when_it_found_unknown_sheets(tmp_path):
@@ -62,7 +61,6 @@ def test_validate_references_still_passes_on_a_clean_workbook(tmp_path):
     assert out["passed"] is True
 
 
-# ------------------------------------------------------------------- V1-7
 
 
 def test_import_data_refuses_an_unknown_codec_inline(tmp_path):
@@ -94,7 +92,6 @@ def test_import_data_still_accepts_real_codecs(tmp_path):
         assert out["ok"] is not False
 
 
-# ------------------------------------------------------- V1-8 (five items)
 
 
 def test_a_list_column_reference_reads_as_a_column_reference(tmp_path):
@@ -163,7 +160,6 @@ def test_ordinary_output_names_are_untouched_by_the_device_guard(tmp_path):
         dataio.export_range(p, out_file=str(tmp_path / name))
 
 
-# ------------------------------------------------------------------- V1-9
 
 
 def test_a_read_only_file_is_not_diagnosed_as_open_in_excel(tmp_path):
@@ -202,10 +198,16 @@ def test_a_read_only_file_is_not_diagnosed_as_open_in_excel(tmp_path):
 
 
 def test_a_genuinely_held_file_still_says_so(tmp_path):
-    """The new branch must not swallow the lock message it split off."""
+    """The new branch must not swallow the lock message it split off. Wave
+    6: "open in Excel" is said when Excel's owner file is beside the
+    workbook; a file some other program holds is described as that."""
     from xlsx_mcp.core.package import held_refusal, read_only_refusal
 
-    assert "open in Excel" in held_refusal("b.xlsx")
+    book = tmp_path / "b.xlsx"
+    assert "in use by another program" in held_refusal(str(book))
+    assert "open in Excel" not in held_refusal(str(book))
+    (tmp_path / "~$b.xlsx").write_bytes(b"owner")
+    assert "open in Excel" in held_refusal(str(book))
     assert "read-only" in read_only_refusal("b.xlsx")
     assert "open in Excel" not in read_only_refusal("b.xlsx")
 
@@ -216,6 +218,7 @@ def test_a_genuinely_held_file_still_says_so(tmp_path):
 HAZARD_FIXTURE = "shape.xlsx"
 
 
+@pytest.mark.usefixtures("rewrite_route")
 def test_the_hazard_refusal_stops_naming_a_route_com_cannot_take(tmp_path):
     """The refusal offered "enable COM (com pack)" for a refused cell
     write. The com pack's eleven tools recalculate, drive pivots and goal
@@ -228,7 +231,7 @@ def test_the_hazard_refusal_stops_naming_a_route_com_cannot_take(tmp_path):
 
     from xlsx_mcp.core.errors import HazardRefused
 
-    src = Path(__file__).parent.parent / "fixtures" / "samples" / HAZARD_FIXTURE
+    src = Path(__file__).parent.parent / "fixtures" / "workbooks" / HAZARD_FIXTURE
     if not src.exists():  # pragma: no cover
         pytest.skip(f"{HAZARD_FIXTURE} fixture not built")
     p = tmp_path / HAZARD_FIXTURE
@@ -265,7 +268,6 @@ def test_the_loss_costs_come_from_the_hazard_table(tmp_path):
     assert hazard.loss_costs(["not-a-key"]) == []
 
 
-# ------------------------------------------------------------------ V1-11
 
 
 def test_render_sheet_refuses_by_name_when_the_session_has_no_clipboard(
@@ -298,7 +300,6 @@ def test_the_clipboard_probe_never_raises():
     assert comtier._clipboard_available() in (True, False)
 
 
-# ------------------------------------------------------------------ V1-10
 
 
 class TestConstructedNamesStayWritable:
@@ -419,7 +420,7 @@ def test_an_unreadable_file_is_not_diagnosed_as_a_lock(tmp_path,
                                                        monkeypatch):
     """PermissionError means a lock on Windows and permissions on POSIX.
 
-    Telling the owner of a file they cannot read that "another process holds
+    Telling the user of a file they cannot read that "another process holds
     a lock" sends them hunting for a process that does not exist. The scan
     asks the filesystem which case it is instead of reading it off the
     exception type."""

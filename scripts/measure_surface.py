@@ -1,81 +1,68 @@
-"""Measure the real tool surface: counts and approx token bills per pack.
+"""Measure the real tool surface over real stdio.
 
-Imports the server (which registers every tool) and prints, from the live
-registry, the per-pack tool count and token estimate (description + JSON
-schema at ~4 chars/token, the same math packs.approx_tokens uses for the
-informed-approval report), plus the lite and full totals. README and site
-numbers come from running this, never from hand-math.
+Starts the Community launcher as a subprocess, reads tools/list exactly as a
+client receives it, and prints per tool: description characters, input
+schema bytes (compact JSON), and tokens by Excel's own counter (each tool as
+serialized, compact JSON, length / 4: the method the released README
+figures used, packs.approx_tokens before the family surface). The total is
+the figure the ceiling in tests/unit/test_family_stdio.py pins.
 
-Run:  .venv/Scripts/python.exe -X utf8 scripts/measure_surface.py
+    python -X utf8 scripts/measure_surface.py           # table
+    python -X utf8 scripts/measure_surface.py --json    # one JSON line
+
 """
 
 from __future__ import annotations
 
-import asyncio
+import argparse
 import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tests" / "unit"))
 
-from xlsx_mcp import packs, server  # noqa: E402
+
+def approx_tokens(tool: dict) -> int:
+    return round(len(json.dumps(tool, ensure_ascii=False, separators=(",", ":"))) / 4)
 
 
-def _fmt_tokens(n: int) -> str:
-    return f"{n / 1000:.1f}k"
+def measure(env: dict | None = None) -> dict:
+    import family_harness as fh
+
+    res = fh.stdio_session([], env=env)
+    rows = []
+    for t in res["tools"]:
+        rows.append({
+            "tool": t["name"],
+            "description_chars": len(t.get("description") or ""),
+            "schema_bytes": len(json.dumps(t.get("inputSchema") or {}, ensure_ascii=False,
+                                           separators=(",", ":")).encode("utf-8")),
+            "approx_tokens": approx_tokens(t),
+            "ops": len(((t.get("inputSchema") or {}).get("properties") or {})
+                       .get("op", {}).get("enum") or []),
+        })
+    return {"tools": len(rows), "ops": sum(r["ops"] for r in rows),
+            "approx_tokens": sum(r["approx_tokens"] for r in rows),
+            "instructions_chars": len(res.get("instructions") or ""),
+            "server_version": res.get("server_version"), "rows": rows}
 
 
 def main() -> None:
-    all_tools = {t.name: t for t in asyncio.run(server.mcp.list_tools())}
-    names = packs.tool_names()
-    packed = {n for members in names.values() for n in members}
-    unpacked = sorted(set(all_tools) - packed)
-
-    total_tools = 0
-    total_tokens = 0
-    print(f"{'pack':<24} {'tools':>5} {'~tokens':>8}")
-    print("-" * 40)
-    order = ["lite", *packs.pack_names()]
-    for pack in order:
-        members = names.get(pack, [])
-        if not members:
-            continue
-        cost = sum(
-            packs.approx_tokens(all_tools.get(n) or packs._REGISTRY[pack][n])
-            for n in members
-        )
-        total_tools += len(members)
-        total_tokens += cost
-        print(f"{pack:<24} {len(members):>5} {_fmt_tokens(cost):>8}")
-    if unpacked:
-        cost = sum(packs.approx_tokens(all_tools[n]) for n in unpacked)
-        total_tools += len(unpacked)
-        total_tokens += cost
-        print(f"{'(unpacked surface)':<24} {len(unpacked):>5} "
-              f"{_fmt_tokens(cost):>8}")
-    print("-" * 40)
-    print(f"{'TOTAL (full)':<24} {total_tools:>5} "
-          f"{_fmt_tokens(total_tokens):>8}")
-
-    lite = names.get("lite", [])
-    if lite:
-        lite_cost = sum(
-            packs.approx_tokens(all_tools.get(n) or packs._REGISTRY['lite'][n])
-            for n in lite
-        )
-        print()
-        print(f"lite startup surface: {len(lite)} tools, "
-              f"~{_fmt_tokens(lite_cost)} tokens")
-    print(f"full surface (KS4XL_MODE=full): {total_tools} tools, "
-          f"~{_fmt_tokens(total_tokens)} tokens")
-
-    # Description vs schema split, for the efficiency-accounting sections.
-    desc = sum(len(t.description or "") for t in all_tools.values())
-    schema = sum(
-        len(json.dumps(t.parameters or {})) for t in all_tools.values()
-    )
-    print(f"split: ~{_fmt_tokens(round(desc / 4))} descriptions + "
-          f"~{_fmt_tokens(round(schema / 4))} schemas")
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--json", action="store_true")
+    a = ap.parse_args()
+    report = measure()
+    if a.json:
+        print(json.dumps(report))
+        return
+    print(f"{'tool':<18} {'ops':>4} {'desc':>6} {'schema':>7} {'~tokens':>8}")
+    for r in report["rows"]:
+        print(f"{r['tool']:<18} {r['ops']:>4} {r['description_chars']:>6} "
+              f"{r['schema_bytes']:>7} {r['approx_tokens']:>8}")
+    print(f"TOTAL: {report['tools']} tools, {report['ops']} ops, "
+          f"{report['approx_tokens']} tokens (Excel's counter); instructions "
+          f"{report['instructions_chars']} chars")
 
 
 if __name__ == "__main__":

@@ -38,8 +38,10 @@ say idempotent, and the whole-value setters that take an address and a
 value and carry no action selector. Everything else is left unset rather
 than guessed; an absent hint means undeclared, never false.
 
-`openWorldHint` is `false` on every tool. Nothing here reaches a remote service; the
-optional update check is not a tool.
+`openWorldHint` is `false` on every tool except `xl_app`, which holds `update_now`: that
+operation downloads the new version from PyPI, or the new bundle from GitHub, when the user
+asks for it. Nothing else reaches a remote service. The weekly update check, which may run in
+the background after a call, is not an operation.
 
 ## Tools that may perform destructive updates (45)
 
@@ -102,8 +104,8 @@ optional update check is not a tool.
 | `copy_workbook` | writes to a separate destination; an overwrite rotates the destination into its backup slot first |
 | `create_table` | adds new content at a position; nothing existing is replaced or removed |
 | `create_workbook` | creates a new object or file and refuses an existing target |
-| `disable_tools` | changes only this session's tool surface, which the counterpart tool reverses |
-| `enable_tools` | changes only this session's tool surface, which the counterpart tool reverses |
+| `update_notices` | records the user's notice setting in the server's state folder; no workbook is touched |
+| `update_now` | updates the server program itself when the user asks; no workbook is touched |
 ## Read-only tools (18)
 
 `readOnlyHint: true`, and no `destructiveHint`: the field carries no
@@ -117,4 +119,4 @@ in `core/readonly.py` and is guarded by
 
 `idempotentHint: true`.
 
-`disable_tools`, `enable_tools`, `set_cell`, `set_cells`, `set_dimensions`, `set_filter`, `set_formula`, `set_header_footer`, `set_page_layout`, `set_view`, `set_workbook_properties`
+`set_cell`, `set_cells`, `set_dimensions`, `set_filter`, `set_formula`, `set_header_footer`, `set_page_layout`, `set_view`, `set_workbook_properties`

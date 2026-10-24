@@ -1,0 +1,23 @@
+{
+  "key_id": "ks4-root-2026",
+  "claim": {
+    "schema": 1,
+    "cert_type": "intermediate",
+    "issuer_key_id": "ks4-root-2026",
+    "key_id": "ks4-int-ent-2026",
+    "public_key": "WC+KducPR+dOOVqv3EtnSeFKu9nNeak2ChffX8g1Gd0=",
+    "valid_from": "2026-09-14",
+    "valid_to": "2029-09-14",
+    "scope": {
+      "name": "enterprise",
+      "bands": [
+        "team",
+        "department",
+        "organization",
+        "enterprise"
+      ],
+      "products": "*"
+    }
+  },
+  "signature": "Ah5n6+CQeGNJbTh/988wK+Fsrvg0T3HufcrsO5YxvgoC498SAYqAsnPdxPmn8Uk+59eJB9Eb5ICHxu2fcOdjDA=="
+}

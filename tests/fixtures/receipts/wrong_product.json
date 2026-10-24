@@ -1,0 +1,12 @@
+{
+  "key_id": "fixture-key",
+  "payload": {
+    "schema": 1,
+    "product": "kitchensink4word-business",
+    "license_id": "FIXTURE-0004",
+    "licensee": "Fixture Holdings Ltd",
+    "issued_on": "2026-01-15",
+    "updates_through": "2027-01-15"
+  },
+  "signature": "8VhRN+TXI5Chb2zShPhRYJdeCZIbKdZAEv6nE5DSgy5UiMGFaph4Qy3tGlFmKMTFUI1nw9azRWuifewIhbLjAg=="
+}

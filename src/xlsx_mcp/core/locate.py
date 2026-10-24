@@ -1,9 +1,9 @@
 """core/locate.py: the grid location resolver.
 
-Every positional
-tool takes a ``location`` object carrying EXACTLY ONE selector key; this module
-resolves it against an open openpyxl workbook to a normalized rectangle
-``{sheet, min_row, min_col, max_row, max_col}`` before any tool acts.
+The Word editor's location-object resolver adapted to the grid domain. Every
+positional tool takes a ``location`` object carrying EXACTLY ONE selector key;
+this module resolves it against an open openpyxl workbook to a normalized
+rectangle ``{sheet, min_row, min_col, max_row, max_col}`` before any tool acts.
 
 Selectors:
 
@@ -25,15 +25,16 @@ Selectors:
                                                       get_grid_view showed,
                                                       content-verified
 
-No tool acts on first
+Discipline inherited from the Word editor: no tool acts on first
 match. A search or name that resolves to more than one target with no
 disambiguator refuses with AmbiguousTarget (AMBIGUOUS_LOCATION) carrying every
 match. Zero matches refuse with TargetNotFound (NOT_FOUND) plus nearest-miss
 hints. Out-of-grid addresses refuse with RangeOutOfBounds. The used_range
 selector computes the TRUE used range (value-bearing bounds), which differs
-from openpyxl's dimension (see true_used_range).
+from openpyxl's dimension (see true_used_range); the incumbent gets this wrong.
 
-The anchor selector is view-stable addressing: get_grid_view returns one self-contained
+The anchor selector is view-stable addressing: get_grid_view returns one
+self-contained
 token for the rectangle it SHOWED (sheet + A1 bounds + a content
 fingerprint), and {"anchor": token} resolves to that rectangle only while
 its content is unchanged, refusing StaleAnchor (STALE_ANCHOR) otherwise.
@@ -72,7 +73,8 @@ SELECTORS = (
     "cell", "range", "a1", "r1c1", "name", "named_range",
     "table", "used_range", "region", "search", "anchor",
 )
-#: nothing reserved anymore; the anchor selector is supported. Kept (empty) for import stability.
+#: Nothing is reserved any more (the anchor selector is live). Kept (empty)
+#: for import stability.
 RESERVED_SELECTORS: tuple[str, ...] = ()
 
 #: anchor token version tag; a token from a future incompatible scheme
@@ -81,7 +83,7 @@ _ANCHOR_TAG = "gv1"
 
 #: Fingerprint field shape (blake2b, digest_size=5 -> 10 hex chars). A token
 #: whose fingerprint field is not this shape is MALFORMED, not stale, and says
-#: so (adversarial round: a truncated token used to report STALE_ANCHOR, which
+#: so (a truncated token used to report STALE_ANCHOR, which
 #: sent the caller looking for a content change that never happened).
 _FP_RE = re.compile(r"[0-9a-f]{10}")
 
@@ -215,9 +217,9 @@ def true_used_range(ws) -> tuple[int, int, int, int] | None:
     tools can author wrong. Either over-reports (a sheet formatted out to
     column Z but with data only in A:C reports A:Z) or, when the tag is stale,
     mis-reports. Filtering on ``value is not None`` yields the range a human
-    would call "used" and the range a read tool should page over, and it
-    avoids rejecting legitimate targets by checking against a wrong used
-    range.
+    would call "used" and the range a read tool should page over. This fixes
+    the incumbent's habit of rejecting legitimate targets (validate_excel_range)
+    by checking against a wrong used range.
     """
     cells = getattr(ws, "_cells", None)
     min_r = min_c = None
@@ -278,13 +280,35 @@ def _resolve_a1(wb, ref: Any, sheet: str | None, selector: str) -> ResolvedGrid:
         raise XlMcpError(
             f"{selector} selector: {ref!r} is not a valid A1 reference")
     if None in (min_col, min_row, max_col, max_row):
-        raise XlMcpError(
-            f"{selector} selector: {ref!r} is a whole-row or whole-column "
-            "reference; give a bounded cell or range")
+        raise XlMcpError(_unbounded_text(
+            ws, selector, ref, min_col, min_row, max_col, max_row))
     _check_bounds(min_col, min_row, max_col, max_row, f"{selector} {ref!r}")
     return ResolvedGrid(
         ws.title, min_row, min_col, max_row, max_col, selector,
         matched={"a1": ref.upper()})
+
+
+def _unbounded_text(ws, selector: str, ref: str, min_col, min_row, max_col,
+                    max_row) -> str:
+    """A whole-column or whole-row reference ('A:A', '2:2') is
+    refused with the bounded range that does the same job on this sheet's
+    data. Five of a weaker model's 17 BAD_PARAMS refusals in testing were
+    this one; a model told only "give a bounded range" has to guess one."""
+    by_column = min_row is None
+    head = (f"{selector} selector: {ref!r} is a "
+            f"{'whole-column' if by_column else 'whole-row'} reference, and "
+            "this server takes bounded ranges.")
+    used = true_used_range(ws)
+    if used is None:
+        return head + " This sheet has no data yet, so there is nothing in it to name."
+    r0, c0, r1, c1 = used
+    if by_column:
+        bounded = f"{get_column_letter(min_col)}{r0}:{get_column_letter(max_col)}{r1}"
+    else:
+        bounded = f"{get_column_letter(c0)}{min_row}:{get_column_letter(c1)}{max_row}"
+    whole = f"{get_column_letter(c0)}{r0}:{get_column_letter(c1)}{r1}"
+    return (f"{head} The data on this sheet runs {whole}, so the bounded form is "
+            f"{bounded} (or {{\"used_range\": true}} for all of it).")
 
 
 def _resolve_r1c1(wb, ref: Any, sheet: str | None) -> ResolvedGrid:
@@ -338,14 +362,21 @@ def _resolve_name(wb, value: Any, sheet: str | None,
     if not isinstance(value, str) or not value.strip():
         raise XlMcpError("name selector takes a defined-name string")
     target = value.strip()
-    hits = [
-        (scope, name, defn)
-        for scope, name, defn in _all_defined_names(wb)
-        if name == target
-    ]
+    # Excel's names ignore letter case (=rate finds Rate). A name written in
+    # the exact case is still preferred, so two scopes that differ only in
+    # case (a workbook RATE beside a sheet's Rate) read as before.
+    folded = target.casefold()
+    every = [(scope, name, defn) for scope, name, defn in _all_defined_names(wb)
+             if name.casefold() == folded]
+    hits = [h for h in every if h[1] == target] or every
     if scope_hint is not None:
-        hits = [h for h in hits if h[0].lower() == scope_hint.lower()
+        hits = [h for h in every if h[0].lower() == scope_hint.lower()
                 or (scope_hint.lower() == "workbook" and h[0] == "workbook")]
+    elif sheet is not None and len(every) > 1:
+        # On a sheet, that sheet's own name shadows the workbook's, as in Excel.
+        own = [h for h in every if h[0].lower() == sheet.lower()]
+        if len(own) == 1:
+            hits = own
     if not hits:
         allnames = sorted({n for _s, n, _d in _all_defined_names(wb)})
         raise TargetNotFound(
@@ -360,20 +391,61 @@ def _resolve_name(wb, value: Any, sheet: str | None,
             [{"scope": s, "name": n, "value": getattr(d, "value", None)}
              for s, n, d in hits])
     scope, name, defn = hits[0]
-    dests = list(getattr(defn, "destinations", []) or [])
+    val = getattr(defn, "value", None) or getattr(defn, "attr_text", None)
+    try:
+        dests = list(getattr(defn, "destinations", []) or [])
+    except Exception:
+        dests = []
     if not dests:
-        val = getattr(defn, "value", None)
         raise TargetNotFound(
             f"defined name {name!r} does not resolve to a cell range "
             f"(its definition is {val!r}); it may be a constant or a formula")
+    for dest_sheet, coord in dests:
+        bare = (dest_sheet or "").strip("'")
+        if bare.startswith("[") or "]" in bare:
+            raise TargetNotFound(
+                f"defined name {name!r} refers to another workbook ({val}); "
+                "open that workbook to read it")
+        if ":" in bare and bare not in wb.sheetnames:
+            raise TargetNotFound(
+                f"defined name {name!r} refers to the same cells on several sheets "
+                f"({val}), a 3D reference; address one sheet's cells by cell/range")
     if len(dests) > 1:
-        raise _ambiguous(
-            f"defined name {name!r} refers to {len(dests)} disjoint ranges; "
-            "address the specific range you want by cell/range",
-            [{"sheet": s, "range": c} for s, c in dests[:_MAX_LISTED]])
-    dest_sheet, coord = dests[0]
+        from . import refs as _refs
+        union = "," in _refs._Read(str(val or "")).view
+        if union or len({s for s, _c in dests}) > 1:
+            raise _ambiguous(
+                f"defined name {name!r} refers to {len(dests)} disjoint ranges; "
+                "address the specific range you want by cell/range",
+                [{"sheet": s, "range": c} for s, c in dests[:_MAX_LISTED]])
+        # Ranges joined by a space are their intersection (Excel's operator:
+        # =Data!$A$1:$B$2 Data!$B$2:$C$3 is Data!$B$2), not two ranges.
+        box = None
+        for _s, c in dests:
+            b = range_boundaries(c.replace("$", ""))
+            if None in b:
+                box = None
+                break
+            box = b if box is None else (max(box[0], b[0]), max(box[1], b[1]),
+                                         min(box[2], b[2]), min(box[3], b[3]))
+        if box is None or box[0] > box[2] or box[1] > box[3]:
+            raise TargetNotFound(
+                f"defined name {name!r} is the intersection of ranges that do not "
+                f"overlap ({val}); Excel shows #NULL! for it")
+        min_col, min_row, max_col, max_row = box
+        coord = (f"{get_column_letter(min_col)}{min_row}:"
+                 f"{get_column_letter(max_col)}{max_row}")
+        dest_sheet = dests[0][0]
+    else:
+        dest_sheet, coord = dests[0]
+        min_col, min_row, max_col, max_row = range_boundaries(coord.replace("$", ""))
     ws = _sheet_for(wb, dest_sheet, selector="name")
-    min_col, min_row, max_col, max_row = range_boundaries(coord.replace("$", ""))
+    if None in (min_col, min_row, max_col, max_row):
+        # A whole column or row (=Data!$A:$A): refused like the same range
+        # given as A1, with the bounded form that reads this sheet's data
+        # (it raised TypeError: None compared with an int).
+        raise XlMcpError(_unbounded_text(
+            ws, "name", f"{name} ({val})", min_col, min_row, max_col, max_row))
     _check_bounds(min_col, min_row, max_col, max_row, f"name {name!r}")
     return ResolvedGrid(
         ws.title, min_row, min_col, max_row, max_col, "name",

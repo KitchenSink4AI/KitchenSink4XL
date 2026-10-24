@@ -28,4 +28,4 @@ Include the tool name, the exact call with its parameters, what happened and wha
 
 ## What gets accepted
 
-Small, well-tested fixes are merged fastest. For a larger feature, please open an issue describing the use case before writing code. The tool set is deliberately compact, so a new tool needs a strong reason to exist.
+Small, well-tested fixes are easier to review. For a larger feature, please open an issue describing the use case before writing code. The tool set is deliberately compact, so a new tool needs a strong reason to exist.

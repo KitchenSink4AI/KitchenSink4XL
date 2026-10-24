@@ -1,7 +1,8 @@
-"""Regressions for formula and number safety.
+"""Regressions for the NUMBERS-SAFETY GATE.
 
-Pure-Python standing proofs for defects that would otherwise only show up
-against a live Excel, so they cannot come back silently:
+The COM half of the gate lives in tests/com_gates/numbers_safety_gate.py and
+needs real Excel. These are the pure-Python standing proofs for the defects
+that gate found, so they can never come back silently:
 
   - LET / LAMBDA parameter names must carry the _xlpm. prefix (without it
     Excel REFUSED TO OPEN the workbook at all),
@@ -62,7 +63,7 @@ def test_xlpm_prefixes_a_lambda_valued_parameter_at_its_call_site():
 
 
 def test_xlpm_leaves_a_sheet_qualifier_bare():
-    # verified against Excel: Excel stores
+    # COM ground truth: Excel stores
     # =LET(Sales,1,Sales+Sales!A1) as
     # _xlfn.LET(_xlpm.Sales,1,_xlpm.Sales+Sales!A1) -- a name followed by
     # "!" is a sheet qualifier, never a parameter use, and stays bare.
@@ -141,7 +142,7 @@ def test_denormalize_strips_every_storage_prefix():
     ("roundup", "ROUNDUP(A1,2)"), ("sumif", "SUMIF(A:A,1,B:B)"),
 ])
 def test_a_builtin_wins_at_a_call_site_beyond_the_seed_list(name, call):
-    # verified against Excel: Excel stores =LET(mod,2,mod+MOD(7,3)) as
+    # COM ground truth: Excel stores =LET(mod,2,mod+MOD(7,3)) as
     # _xlfn.LET(_xlpm.mod,2,_xlpm.mod+MOD(7,3)) and evaluates 3 -- the
     # builtin wins at a call site even when the name is declared. The guard
     # used to hold a 30-name sample, so every function outside it (MOD,
@@ -161,7 +162,7 @@ def test_the_call_site_guard_covers_the_whole_builtin_catalog():
 
 
 def test_xlpm_leaves_a_quoted_sheet_name_bare():
-    # verified against Excel: Excel stores =LET(x,1,x+'Sales x'!A1) with the quoted
+    # COM ground truth: Excel stores =LET(x,1,x+'Sales x'!A1) with the quoted
     # sheet name untouched. The "!" lookahead does not reach it -- the
     # occurrence inside the quotes is followed by an apostrophe.
     out, _ = core_calc.normalize_formula("=LET(x,1,x+'Sales x'!A1)")
@@ -409,8 +410,7 @@ def test_sort_key_follows_excels_type_ranking():
 
 def test_rich_data_error_literals_rank_as_errors_not_text():
     # The rich-data / Python-in-Excel error values are errors, not words: a
-    # literal missing from _ERROR_LITERALS silently sorts into the text run
-    
+    # literal missing from _ERROR_LITERALS silently sorts into the text run.
     for lit in ("#FIELD!", "#BLOCKED!", "#CONNECT!", "#BUSY!", "#UNKNOWN!",
                 "#EXTERNAL!", "#PYTHON!"):
         assert cells._sort_key(lit)[0] == cells._sort_key("#DIV/0!")[0], lit
@@ -607,7 +607,7 @@ def test_formula_mode_returns_a_string_for_an_array_formula(tmp_path):
 
 
 def test_errors_keep_their_original_order_in_a_sort_like_excel(tmp_path):
-    # verified against Excel: Excel treats all errors as
+    # COM ground truth: Excel treats all errors as
     # equal in a sort, so a column reading #VALUE!, #REF!, #N/A, #DIV/0! comes
     # back in exactly that order. Keying on the literal alphabetized them.
     errs = ["#VALUE!", "#REF!", "#N/A", "#DIV/0!"]

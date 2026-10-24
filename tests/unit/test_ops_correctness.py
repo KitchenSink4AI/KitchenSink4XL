@@ -1,15 +1,16 @@
-"""Correctness tests for the ops layer: each test pins a trap.
+"""Tests for the ops layer: each test pins a correctness trap found
+in the shipped tools.
 
-query_range: blank cells must not slip through lt/le ordered filters (blank
-coerced to "" and "" <= "5"); order_by on a column excluded from the
-projection must not be silently ignored. condformat/datavalidation delete
-must not match ranges by SUBSTRING (a delete aimed at A1 could remove the
-rule on A10:A20). manage_name must not store a leading '=' verbatim, which
-broke destinations parsing and made the name unresolvable. manage_worksheet
-delete checks visibility as well as sheet count, as its docstring says.
-Table names shaped like R1C1 refs are refused. CSV import does not coerce
-"nan"/"inf" into float specials Excel cannot store. sort_range does not
-silently order uncached formula cells by their formula text.
+query_range: blank cells slipped through lt/le ordered filters (blank coerced
+to "" and "" <= "5"); order_by on a column excluded from the projection was
+silently ignored. condformat/datavalidation delete matched ranges by
+SUBSTRING, so a delete aimed at A1 could remove the rule on A10:A20.
+manage_name stored a leading '=' verbatim, which broke destinations parsing
+and made the name unresolvable. manage_worksheet delete checked sheet count
+but not visibility, contradicting its own docstring. Table names shaped like
+R1C1 refs passed validation. CSV import coerced "nan"/"inf" into float
+specials Excel cannot store. sort_range silently ordered uncached formula
+cells by their formula text.
 """
 
 from __future__ import annotations

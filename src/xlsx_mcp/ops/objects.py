@@ -19,7 +19,7 @@ hazard and the save warns rather than refuses. Deliberate delete registers
 expect_removal so the default-fail part checks recognize the intent.
 
 Sparklines are NOT here: they live in an x14 extension inside the sheet XML
-that openpyxl does not model, so they are not supported.
+that openpyxl does not model.
 
 Both mutators run a post-save object-count read-back (the object analog of
 the cell content read-back): a mismatch restores the backup and refuses.
@@ -36,9 +36,9 @@ from openpyxl.utils import get_column_letter
 from ..core.errors import (
     TargetNotFound,
     ValidationFailed,
-    WorkbookNotFound,
     XlMcpError,
 )
+from ..core import xmlsafe as _xmlsafe
 from ..core.package import WorkbookPackage
 from . import gridio
 
@@ -69,7 +69,7 @@ def _picture_only_drawings(path: str, report) -> bool:
     """True when every part of the drawings hazard is a picture-only drawing:
     its rels exist and target only images, and the drawing XML carries no
     real shape element (sp / grpSp / cxnSp; pic is the picture itself).
-    OBSERVED (openpyxl 3.1.5 + Pillow 12.3): such drawings
+    OBSERVED on this machine (openpyxl 3.1.5 + Pillow 12.3): such drawings
     and their xl/media/ payloads round-trip intact through load+save, for
     Excel-authored and openpyxl-authored images alike. Anything else stays
     conservatively unsafe."""
@@ -95,8 +95,7 @@ def _picture_only_drawings(path: str, report) -> bool:
                         t.rstrip("/").lower().endswith(_IMG_REL_SUFFIX)
                         for t in types):
                     return False
-                from xml.etree.ElementTree import fromstring
-                root = fromstring(zf.read(part))
+                root = _xmlsafe.fromstring(zf.read(part), doc=path, part=part)
                 for el in root.iter():
                     tag = el.tag
                     local = tag.rsplit("}", 1)[-1] if isinstance(tag, str) \
@@ -139,6 +138,41 @@ def _anchor_cell(obj) -> str | None:
         return None
 
 
+def _ref_text(ref) -> str | None:
+    for kind in ("numRef", "strRef"):
+        f = getattr(getattr(ref, kind, None), "f", None)
+        if f:
+            return f
+    return None
+
+
+def _series_refs(chart) -> list[dict]:
+    """What each series plots, as the ranges the chart
+    stores (values, categories or x values, and the title cell)."""
+    out = []
+    for s in getattr(chart, "series", None) or []:
+        entry = {"values": _ref_text(getattr(s, "val", None) or getattr(s, "yVal", None))}
+        cats = _ref_text(getattr(s, "cat", None) or getattr(s, "xVal", None))
+        if cats:
+            entry["categories"] = cats
+        title = getattr(getattr(getattr(s, "tx", None), "strRef", None), "f", None)
+        if title:
+            entry["title_cell"] = title
+        out.append(entry)
+    return out
+
+
+def chart_kind(chart) -> str:
+    """A chart's type in create's own vocabulary (bar, bar_horizontal, line,
+    pie, doughnut, area, scatter); any other kind Excel draws reads as its
+    lower-case name (radar, bubble, stock, surface, bar3d...). A list speaks
+    the vocabulary its add takes."""
+    name = type(chart).__name__
+    if name == "BarChart":
+        return "bar_horizontal" if getattr(chart, "barDir", "col") == "bar" else "bar"
+    return name.removesuffix("Chart").lower()
+
+
 def _restore_and_refuse(pkg: WorkbookPackage, backup: bool, msg: str):
     restored = False
     if backup:
@@ -150,6 +184,54 @@ def _restore_and_refuse(pkg: WorkbookPackage, backup: bool, msg: str):
 
 
 # ------------------------------------------------------------------ images
+
+
+def _list_images(path: str, sheet: str | None) -> dict:
+    """Every picture in the workbook, read from the drawing parts
+    themselves. openpyxl only loads a picture when Pillow is
+    installed, and reports the source file's pixel size rather than the
+    placed size, so the old list showed nothing at all on an ordinary
+    workbook with logos. `index` is the picture's position on its sheet,
+    the number delete takes. Charts, shapes and other drawn objects are
+    counted, not listed, and named as such."""
+    from ..core import pkginfo as _pkginfo
+    from ..core.sandbox import check_path
+    import os
+
+    wp = check_path(path, "open workbook")
+    from ..core import swapwait as _swapwait
+    _swapwait.require_workbook(wp, f"no such workbook: {wp}")
+    _xmlsafe.check_file(wp)  # a part with a DTD is refused, as every read does
+    found = _pkginfo.drawing_objects(wp, sheet)
+    if sheet is not None and sheet not in found:
+        raise TargetNotFound(f"no sheet named {sheet!r}")
+    images: list[dict] = []
+    others: dict[str, int] = {}
+    for title, objs in found.items():
+        i = 0
+        for o in objs:
+            if o["kind"] != "picture":
+                others[o["kind"]] = others.get(o["kind"], 0) + 1
+                continue
+            i += 1
+            entry = {"sheet": title, "index": i, "name": o.get("name"),
+                     "at_cell": o["anchor"]["from"],
+                     "placement": o["anchor"],
+                     "width": o.get("width"), "height": o.get("height"),
+                     "format": o.get("format")}
+            for key in ("description", "media", "bytes", "linked"):
+                if o.get(key) is not None:
+                    entry[key] = o[key]
+            images.append(entry)
+    out: dict = {"images": images, "count": len(images)}
+    if others:
+        out["other_drawn_objects"] = others
+        out["note"] = ("charts and drawn shapes are counted here, not listed; "
+                       "manage_chart lists charts")
+    if images and not _pillow_available():
+        out["edit_note"] = ("listing works without Pillow; inserting or "
+                            "deleting a picture needs the Pillow library")
+    return out
 
 
 def manage_image(path: str, action: str, image_file: str | None = None,
@@ -164,52 +246,77 @@ def manage_image(path: str, action: str, image_file: str | None = None,
             f"action must be one of {IMAGE_ACTIONS}, got {action!r}")
 
     if action == "list":
-        wb = gridio.open_wb(path)
-        try:
-            out = []
-            for ws in (wb.worksheets if sheet is None else [wb[sheet]]):
-                for i, img in enumerate(getattr(ws, "_images", []), start=1):
-                    # display size comes from the anchor extent (EMU, 9525
-                    # per pixel) when present; openpyxl's img.width is the
-                    # source file's pixel size, not the placed size
-                    w = getattr(img, "width", None)
-                    h = getattr(img, "height", None)
-                    ext = getattr(getattr(img, "anchor", None), "ext", None)
-                    if ext is not None and ext.cx and ext.cy:
-                        w = round(ext.cx / 9525)
-                        h = round(ext.cy / 9525)
-                    out.append({
-                        "sheet": ws.title, "index": i,
-                        "anchor": _anchor_cell(img),
-                        "width": w, "height": h,
-                        "format": getattr(img, "format", None)})
-            return {"images": out, "count": len(out)}
-        finally:
-            wb.close()
+        return _list_images(path, sheet)
 
     if action == "extract":
         if not out_dir:
             raise XlMcpError("extract needs out_dir (a directory to write "
                              "the image files into)")
         import os
+        from ..core.outguard import guard_out_dir
         from ..core.sandbox import check_path
-        od = check_path(out_dir, "write extracted images")
+        # The extract target is an output
+        # directory like export_file's, so the backup-store rule applies;
+        # before this, images could be written into .ks4xl-backups.
+        od = guard_out_dir(out_dir, what="extracted images")
         if not os.path.isdir(od):
             raise XlMcpError(f"out_dir is not an existing directory: {od}")
         wp = check_path(path, "open workbook")
-        if not os.path.exists(wp):
-            raise WorkbookNotFound(f"no such workbook: {wp}")
+        from ..core import swapwait as _swapwait
+        _swapwait.require_workbook(wp, f"no such workbook: {wp}")
         written = []
+        from ..core import deadline as _deadline
+        from ..core import zipsafe as _zipsafe
+        import shutil
         with zipfile.ZipFile(wp) as zf:
-            media = [n for n in zf.namelist()
-                     if n.lower().startswith("xl/media/")]
-            for name in sorted(media):
-                base = name.rsplit("/", 1)[-1]
-                dest = os.path.join(od, base)
-                with open(dest, "wb") as fh:
-                    fh.write(zf.read(name))
+            _xmlsafe.check_package(zf, doc=wp)
+            media = sorted((i for i in zf.infolist()
+                            if i.filename.lower().startswith("xl/media/")
+                            and not i.is_dir()), key=lambda i: i.filename)
+            # Each picture is written as a plain file directly in od, named
+            # by the last segment of its part name. The member's name never
+            # becomes a path: a segment that cannot be a plain file name
+            # (a drive or stream colon, a device name, a trailing dot...)
+            # refuses the whole extract, and a name a picture before it took
+            # gets " (2)". Everything is decided before the first write.
+            home = os.path.normcase(os.path.abspath(od))
+            plan, renamed, used = [], {}, set()
+            for info in media:
+                base, why = _zipsafe.media_file_name(info.filename)
+                if base is None:
+                    raise _zipsafe.media_name_refusal(wp, info.filename, why)
+                stem, ext = os.path.splitext(base)
+                name, k = base, 2
+                while name.lower() in used:
+                    name, k = f"{stem} ({k}){ext}", k + 1
+                dest = os.path.join(od, name)
+                if (len(name.encode("utf-8")) > 255 or os.path.normcase(
+                        os.path.dirname(os.path.abspath(dest))) != home):
+                    raise _zipsafe.media_name_refusal(
+                        wp, info.filename, "it does not stay a plain file name in the folder")
+                used.add(name.lower())
+                if name != base:
+                    renamed[info.filename] = name
+                plan.append((info, dest))
+            # An extract never replaces a file that is
+            # already there. Every target is checked before the first write,
+            # so a refusal writes nothing at all.
+            taken = [os.path.basename(d) for _n, d in plan if os.path.lexists(d)]
+            if taken:
+                raise FileExistsError(
+                    f"{od} already holds {', '.join(taken[:10])}"
+                    + (f" (+{len(taken) - 10} more)" if len(taken) > 10 else "")
+                    + "; extract never replaces an existing file. Pass an empty "
+                    "out_dir, or move those files first.")
+            _deadline.commit_or_raise("the export")  # point of no return
+            for info, dest in plan:
+                with zf.open(info) as src, open(dest, "xb") as fh:
+                    shutil.copyfileobj(src, fh, 1 << 20)
                 written.append(dest)
-        return {"extracted": written, "count": len(written)}
+        out = {"extracted": written, "count": len(written)}
+        if renamed:
+            out["renamed"] = renamed
+        return out
 
     # ------------------------------------------------------------- mutations
     if not _pillow_available():
@@ -343,6 +450,11 @@ def _build_chart(chart_type: str):
     else:  # scatter
         ch = _c.ScatterChart()
         ch.style = 13
+    if chart_type not in ("pie", "doughnut"):
+        # Excel writes varyColors 0 on every chart but a
+        # pie or doughnut; left out, Excel colours each point of a single
+        # series differently (a rainbow line, a legend of 0, 1, 2...).
+        ch.varyColors = False
     return ch
 
 
@@ -350,7 +462,7 @@ def _apply_axis_visibility(ch, show_axes: bool) -> None:
     """Say out loud whether the value and category axes are drawn.
 
     openpyxl leaves c:delete unset on a fresh axis, and an omitted c:delete
-    is read as a deleted axis, so every chart created here would have both
+    is read as a deleted axis, so every chart created here shipped with both
     axes suppressed: a plot area with bars in it and no scale to read them
     against. Writing the flag explicitly is the fix, and writing it in both
     directions is what lets a caller still ask for a bare plot.
@@ -387,9 +499,10 @@ def manage_chart(path: str, action: str, chart_type: str | None = None,
                 for i, ch in enumerate(getattr(ws, "_charts", []), start=1):
                     out.append({
                         "sheet": ws.title, "index": i,
-                        "type": type(ch).__name__,
+                        "chart_type": chart_kind(ch),
                         "title": _title_text(getattr(ch, "title", None)),
-                        "anchor": _anchor_cell(ch)})
+                        "at_cell": _anchor_cell(ch),
+                        "series": _series_refs(ch)})
             return {"charts": out, "count": len(out)}
         finally:
             wb.close()
@@ -451,7 +564,7 @@ def manage_chart(path: str, action: str, chart_type: str | None = None,
         pre_count = len(ws._charts)
         ws.add_chart(ch, at)
         pkg._changed["chart"] = {"sheet": grid.sheet, "created": chart_type,
-                                 "anchor": at, "data": grid.a1}
+                                 "at_cell": at, "data": grid.a1}
         result = pkg.save(allow_loss=allow_loss, backup=backup,
                           verify_com=verify_com)
         expected, verb = pre_count + 1, "created"

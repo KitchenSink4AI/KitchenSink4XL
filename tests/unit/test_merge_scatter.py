@@ -162,13 +162,14 @@ def test_set_cells_bad_item_refuses_whole_batch(tmp_path):
         "a refused batch must leave the file byte-for-byte unchanged")
 
 
+@pytest.mark.usefixtures("rewrite_route")
 def test_set_cells_hazard_gate_inherited(tmp_path):
     """The scatter writer refuses on a slicer-bearing workbook like every
     other mutation (WorkbookPackage pipeline, not a side door)."""
     import shutil
     from pathlib import Path
     from xlsx_mcp.core.errors import HazardRefused
-    corpus = Path(__file__).resolve().parents[1] / "fixtures" / "samples"
+    corpus = Path(__file__).resolve().parents[1] / "fixtures" / "workbooks"
     p = str(tmp_path / "sl.xlsx")
     shutil.copy(corpus / "pivot_slicer.xlsx", p)
     with pytest.raises(HazardRefused):

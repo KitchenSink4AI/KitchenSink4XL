@@ -1,5 +1,5 @@
 {
-  "decorator": "_tool",
+  "decorator": "_op",
   "per_tool": {
     "apply_edits": 4,
     "apply_style": 1,
@@ -66,10 +66,12 @@
     "set_view": 1,
     "set_workbook_properties": 1,
     "sort_range": 1,
+    "update_notices": 1,
+    "update_now": 1,
     "validate": 9,
     "write_range": 1
   },
-  "tools_counted": 67,
-  "total_operations": 129,
+  "tools_counted": 69,
+  "total_operations": 131,
   "tree": "kitchensink4xl"
 }

@@ -2,7 +2,7 @@
 
 format_cells writes number format, font, fill, border, and alignment; it MERGES
 each attribute onto the cell's existing style, so setting one property never
-clobbers the others. openpyxl
+clobbers the others (curing the incumbent's format-clobber defect). openpyxl
 deduplicates styles into its shared style table automatically, so repeated
 formatting does not bloat toward the 64,000-format ceiling.
 
@@ -11,7 +11,7 @@ services an autofit REQUEST as a best-effort width approximation (true autofit
 needs Excel's text metrics via the COM tier, so this is marked approximate,
 never claimed as exact). Both route their mutation through WorkbookPackage.
 
-Style layer: apply_style (named cell
+The style layer: apply_style (named cell
 styles, builtin or defined in-call), copy_format (the format painter: one
 source cell's style painted onto a range), and audit_styles (the read-only
 style-bloat audit toward the 64,000-cell-format ceiling:
@@ -24,6 +24,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..core.errors import TargetNotFound, XlMcpError
+from ..core.limits import check_font_name
 from ..core.package import WorkbookPackage
 from ..core.sandbox import check_path
 from . import gridio
@@ -61,6 +62,44 @@ _BORDER_STYLES = {"thin", "medium", "thick", "dashed", "dotted", "double",
 _SIDES = ("left", "right", "top", "bottom")
 
 
+#: The keys each formatting object takes. A key outside
+#: these was dropped silently (border {"top": ...} painted a thin box on all
+#: four sides; font {"colour"} did nothing), so every object is checked and
+#: an unknown key is refused naming the valid ones and the nearest match.
+#: Common spellings (colour, fontSize) are mapped by the surface before
+#: this check, with normalized_from in the answer.
+FONT_KEYS = ("name", "size", "bold", "italic", "underline", "strike", "color")
+FILL_KEYS = ("color", "pattern", "fg", "bg")
+BORDER_KEYS = ("style", "color", "sides", "left", "right", "top", "bottom")
+SIDE_KEYS = ("style", "color")
+ALIGNMENT_KEYS = ("horizontal", "vertical", "wrap_text", "text_rotation", "indent")
+
+
+def _nearest(word: str, choices) -> str | None:
+    import difflib
+
+    hit = difflib.get_close_matches(str(word).lower(), [c.lower() for c in choices], n=1,
+                                    cutoff=0.6)
+    if not hit:
+        return None
+    return next(c for c in choices if c.lower() == hit[0])
+
+
+def check_keys(obj: Any, allowed, what: str) -> dict:
+    """Refuse a formatting object that is not an object, or that carries a
+    key this op does not read."""
+    if not isinstance(obj, dict):
+        raise XlMcpError(f"{what} must be an object with keys {', '.join(allowed)}")
+    unknown = [k for k in obj if k not in allowed]
+    if unknown:
+        k = unknown[0]
+        near = _nearest(k, allowed)
+        raise XlMcpError(
+            f"{what} has no key {k!r}" + (f"; did you mean {near!r}?" if near else "")
+            + f" {what} takes {', '.join(allowed)}.")
+    return obj
+
+
 def _norm_color(c: Any) -> str | None:
     if c is None:
         return None
@@ -88,6 +127,37 @@ def format_cells(path: str, location: Any, number_format: str | None = None,
         raise XlMcpError(
             "pass at least one of number_format, font, fill, border, "
             "alignment")
+    # Every nested key is checked before anything is touched.
+    if font is not None:
+        check_keys(font, FONT_KEYS, "font")
+        check_font_name(font.get("name"), what="font.name")
+    if fill is not None:
+        check_keys(fill, FILL_KEYS, "fill")
+    if alignment is not None:
+        check_keys(alignment, ALIGNMENT_KEYS, "alignment")
+    per_side = {}
+    if border is not None:
+        check_keys(border, BORDER_KEYS, "border")
+        per_side = {k: border[k] for k in _SIDES if k in border}
+        if per_side and "sides" in border:
+            raise XlMcpError(
+                "border takes either sides (one style for the listed sides) or per-side "
+                "objects (top, bottom, left, right), not both")
+        for name, spec in per_side.items():
+            check_keys(spec, SIDE_KEYS, f"border.{name}")
+        sides = border.get("sides")
+        if sides is not None:
+            if isinstance(sides, str):
+                sides = [sides]
+            if not isinstance(sides, list) or not sides:
+                raise XlMcpError("border.sides must be a list of left, right, top, bottom")
+            for sd in sides:
+                if sd not in _SIDES:
+                    near = _nearest(sd, _SIDES)
+                    raise XlMcpError(
+                        f"border.sides has {sd!r}, which is not a side"
+                        + (f"; did you mean {near!r}?" if near else "")
+                        + " Sides are left, right, top and bottom.")
     pkg = WorkbookPackage.open(path)
     grid = pkg.resolve(location, default_sheet=sheet)
     gridio.guard_cell_count(grid)
@@ -115,13 +185,24 @@ def format_cells(path: str, location: Any, number_format: str | None = None,
                            start_color=color,
                            end_color=_norm_color(fill.get("bg")) or color)
 
-    def new_border(existing):
-        style = border.get("style", "thin")
+    def make_side(spec: dict):
+        style = spec.get("style", border.get("style", "thin"))
         if style not in _BORDER_STYLES:
             raise XlMcpError(f"border style must be one of {sorted(_BORDER_STYLES)}")
-        col = _norm_color(border.get("color")) or "FF000000"
-        side = Side(style=None if style == "none" else style, color=col)
+        col = _norm_color(spec.get("color", border.get("color"))) or "FF000000"
+        return Side(style=None if style == "none" else style, color=col)
+
+    def new_border(existing):
+        if per_side:
+            # per-side objects are honoured side by side; sides not
+            # named keep what they had.
+            kw = {s: make_side(per_side[s]) if s in per_side else getattr(existing, s)
+                  for s in _SIDES}
+            return Border(**kw)
+        side = make_side({})
         sides = border.get("sides") or _SIDES
+        if isinstance(sides, str):
+            sides = [sides]
         kw = {s: side if s in sides else getattr(existing, s) for s in _SIDES}
         return Border(**kw)
 
@@ -428,6 +509,15 @@ def _build_named_style(name: str, define: dict):
         raise XlMcpError(
             "define must set at least one of number_format, font, fill, "
             "border, alignment")
+    # The same nested-key check as format_cells.
+    for key, allowed in (("font", FONT_KEYS), ("fill", FILL_KEYS),
+                         ("alignment", ALIGNMENT_KEYS)):
+        if define.get(key):
+            check_keys(define[key], allowed, f"define.{key}")
+    if define.get("font"):
+        check_font_name(define["font"].get("name"), what="define.font.name")
+    if define.get("border"):
+        check_keys(define["border"], ("style", "color", "sides"), "define.border")
     ns = NamedStyle(name=name)
     if define.get("number_format"):
         ns.number_format = str(define["number_format"])
@@ -473,6 +563,74 @@ def _build_named_style(name: str, define: dict):
     return ns
 
 
+# Excel's built-in styles, measured in Excel itself
+# (Style.Include*): what each one includes.
+# Applying a style changes only what it includes, so Good leaves a cell's
+# number format and alignment alone, and Currency changes only the number
+# format. N number format, F font, A alignment, B border, P fill, R protection.
+_INCLUDES_BY_KIND = {
+    "N": ("Comma", "Comma [0]", "Currency", "Currency [0]", "Percent"),
+    "FP": ("Bad", "Good", "Neutral", *(f"Accent{i}" for i in range(1, 7)),
+           *(f"{p}% - Accent{i}" for p in (20, 40, 60) for i in range(1, 7))),
+    "FBP": ("Calculation", "Check Cell", "Input", "Output"),
+    "F": ("Explanatory Text", "Heading 4", "Title", "Warning Text", "Hyperlink",
+          "Followed Hyperlink"),
+    "FB": ("Heading 1", "Heading 2", "Heading 3", "Linked Cell", "Total"),
+    "BP": ("Note",),
+}
+_INCLUDES = {name.casefold(): kind for kind, names in _INCLUDES_BY_KIND.items()
+             for name in names}
+_CATEGORY = {"N": "number_format", "F": "font", "A": "alignment", "B": "border",
+             "P": "fill", "R": "protection"}
+#: Excel's built-in number styles use Excel's own format ids, which Excel
+#: shows in the reader's currency and separators (openpyxl's copies held a
+#: European currency format, "99.00 $").
+_BUILTIN_NUMFMT_ID = {"Comma": 43, "Comma [0]": 41, "Currency": 44, "Currency [0]": 42,
+                      "Percent": 9}
+
+
+def _openpyxl_builtin_name(style: str) -> str:
+    """Excel's own name for a built-in style -> openpyxl's spelling of it
+    ("Heading 1" -> "Headline 1", "20% - Accent1" -> "20 % - Accent1")."""
+    import re
+    m = re.fullmatch(r"heading ([1-4])", style.strip(), re.IGNORECASE)
+    if m:
+        return f"Headline {m.group(1)}"
+    m = re.fullmatch(r"([246]0) ?% - accent([1-6])", style.strip(), re.IGNORECASE)
+    if m:
+        return f"{m.group(1)} % - Accent{m.group(2)}"
+    return style
+
+
+def _excel_name(name: str) -> str:
+    import re
+    m = re.fullmatch(r"Headline ([1-4])", name)
+    if m:
+        return f"Heading {m.group(1)}"
+    return re.sub(r"^([246]0) % - ", r"\1% - ", name)
+
+
+def _excel_builtin(name: str, wb):
+    """A private copy of openpyxl's built-in style, put right where it
+    differs from Excel's: the workbook's Normal font size instead of
+    a fixed 12 (Title and Headings keep their own), and Excel's own number
+    format ids."""
+    from copy import copy, deepcopy
+
+    from openpyxl.styles.builtins import styles as _builtins
+    from openpyxl.styles.numbers import BUILTIN_FORMATS
+
+    ns = deepcopy(_builtins[name])
+    normal = next((s for s in wb._named_styles if s.name == "Normal"), None)
+    size = getattr(getattr(normal, "font", None), "sz", None) or 11
+    if ns.font is not None and ns.font.sz == 12:
+        ns.font = copy(ns.font)
+        ns.font.sz = size
+    if name in _BUILTIN_NUMFMT_ID:
+        ns.number_format = BUILTIN_FORMATS[_BUILTIN_NUMFMT_ID[name]]
+    return ns
+
+
 def apply_style(path: str, style: str, location: Any = None,
                 define: dict | None = None, sheet: str | None = None,
                 allow_loss: bool = False, backup: bool = True,
@@ -492,6 +650,8 @@ def apply_style(path: str, style: str, location: Any = None,
     existing = list(wb.named_styles)
     from openpyxl.styles.builtins import styles as _builtins
 
+    if define is None and style not in existing:
+        style = _openpyxl_builtin_name(style)  # Excel's own names work
     if define is not None:
         if style in existing:
             raise XlMcpError(
@@ -507,12 +667,14 @@ def apply_style(path: str, style: str, location: Any = None,
             + (", ".join(repr(n) for n in existing) or "none")
             + ". Builtins include: Normal, Good, Bad, Neutral, Input, "
             "Output, Calculation, Check Cell, Warning Text, Title, "
-            "Headline 1-4, Total, Note, and the Accent1-6 families.")
+            "Heading 1-4, Total, Note, Currency, Comma, Percent, and the "
+            "Accent1-6 families.")
     elif style not in existing:
         # A builtin used for the first time: register a private copy so the
         # shared module-level object is never bound to this workbook.
-        from copy import deepcopy
-        wb.add_named_style(deepcopy(_builtins[style]))
+        wb.add_named_style(_excel_builtin(style, wb))
+    includes = None if define is not None else _INCLUDES.get(_excel_name(style).casefold())
+    kept = [attr for key, attr in _CATEGORY.items() if includes and key not in includes]
 
     applied = 0
     grid = None
@@ -520,9 +682,14 @@ def apply_style(path: str, style: str, location: Any = None,
         grid = pkg.resolve(location, default_sheet=sheet)
         gridio.guard_cell_count(grid)
         ws = wb[grid.sheet]
+        from copy import copy as _copy
         for r in range(grid.min_row, grid.max_row + 1):
             for c in range(grid.min_col, grid.max_col + 1):
-                ws.cell(r, c).style = style
+                cell = ws.cell(r, c)
+                before = {attr: _copy(getattr(cell, attr)) for attr in kept}
+                cell.style = style
+                for attr, value in before.items():
+                    setattr(cell, attr, value)  # What the style leaves alone
                 applied += 1
     result = pkg.save(allow_loss=allow_loss, backup=backup,
                       verify_com=verify_com)
@@ -575,11 +742,13 @@ def _styles_xml_counts(path: str) -> dict:
     """Part-level truth: element counts straight from xl/styles.xml (the
     count= attributes can lie, so children are counted)."""
     import zipfile
-    from xml.etree import ElementTree as ET
+
+    from ..core import xmlsafe as _xmlsafe
     ns = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
     with zipfile.ZipFile(path) as zf:
         try:
-            root = ET.fromstring(zf.read("xl/styles.xml"))
+            root = _xmlsafe.fromstring(zf.read("xl/styles.xml"), doc=path,
+                                       part="xl/styles.xml")
         except KeyError:
             return {"cell_formats": 0, "fonts": 0, "fills": 0, "borders": 0,
                     "custom_number_formats": 0, "named_styles": 0}
@@ -626,6 +795,8 @@ def audit_styles(path: str, top: int = 10) -> dict:
     if isinstance(top, bool) or not isinstance(top, int) or top < 1:
         raise XlMcpError("top must be an integer >= 1")
     p = check_path(path, "audit styles")
+    from ..core import swapwait as _swapwait
+    _swapwait.require_workbook(p, f"no such workbook: {p}")
     counts = _styles_xml_counts(p)
     wb = gridio.open_wb(path)
     try:

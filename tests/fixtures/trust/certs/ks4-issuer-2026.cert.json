@@ -1,0 +1,23 @@
+{
+  "key_id": "ks4-int-ent-2026",
+  "claim": {
+    "schema": 1,
+    "cert_type": "signing",
+    "issuer_key_id": "ks4-int-ent-2026",
+    "key_id": "ks4-issuer-2026",
+    "public_key": "PQ376p/XqFTvNVerp7ABhBndu0yYyN/cWpeeMRmtj6g=",
+    "valid_from": "2026-09-14",
+    "valid_to": "2027-09-14",
+    "scope": {
+      "name": "enterprise",
+      "bands": [
+        "team",
+        "department",
+        "organization",
+        "enterprise"
+      ],
+      "products": "*"
+    }
+  },
+  "signature": "xN19GMqVKjQSnpl6d6Kwc8YOAlk52ah1whsuwp/bOjC8QD0vmtoicGYaCcL+ayAYJFPgLCbuOlWyD2k1nR8HCg=="
+}

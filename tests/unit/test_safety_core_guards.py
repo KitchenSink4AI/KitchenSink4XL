@@ -1,17 +1,23 @@
-"""Guard tests for the safety-core modules.
+"""Guard gaps in the safety core, closed.
 
-Every test below pins one guarantee that could otherwise be sabotaged
-without a single file-tier test noticing. The most important ones, in
-safesave: the sandbox gate on the mutation path, the cross-process
-lockfile, stale-lock breaking, and the anchor-slot policy (the
-session-start restore point).
+441 mutants across the seven safety-core modules found 15 real-risk
+guarantees with no guard: code that could be sabotaged outright without a
+single file-tier test noticing. Every test below exists to
+KILL one named mutant.
 
-TIMING DISCIPLINE. Nothing here waits on a real elapsed interval to prove a
-policy, because lock-timing tests fail under CPU load: ages are backdated
-with ``os.utime`` or written into hand-built lockfiles, the staleness
-boundary is measured against a frozen clock, and the one genuinely
-concurrent test polls for the child's readiness marker instead of sleeping
-a guessed amount.
+The ones that mattered most, in the least guarded module
+(safesave, 17% kill rate): the sandbox gate on the mutation path could be
+deleted, the cross-process lockfile could be skipped entirely,
+stale-lock breaking could be inverted into a permanent lockout, and
+the anchor-slot policy -- the session-start restore point -- was completely
+unpinned.
+
+TIMING DISCIPLINE. Lock-timing
+tests false-red under CPU load, so nothing here waits on a real elapsed
+interval to prove a policy: ages are backdated with ``os.utime`` or written
+into hand-built lockfiles, the staleness boundary is measured against a
+frozen clock, and the one genuinely concurrent test polls for the child's
+readiness marker instead of sleeping a guessed amount.
 """
 
 from __future__ import annotations
@@ -357,7 +363,7 @@ class TestAnchorSlotPolicy:
         safesave.prepare_rotation(p).commit()
         _plain(Path(p), b"v2")
         rotated = safesave.prepare_rotation(p).commit()
-        # A6: the slot labels in the response are not swapped.
+        # the slot labels in the response are not swapped.
         assert rotated == {"prev": True, "anchor": False}
         assert _slot_bytes(p, safesave.ANCHOR_SLOT) == b"v1"
         assert _slot_bytes(p, safesave.PREV_SLOT) == b"v2"
@@ -771,7 +777,7 @@ class TestUnstorableTextEveryEntryPoint:
 
 
 # ======================================================================
-# self-clobber (rule 1) on the workbook_target path, where it is the
+# Self-clobber (rule 1) on the workbook_target path, where it is the
 # ONLY rule standing between com_convert_format and the source workbook
 # ======================================================================
 
@@ -1075,7 +1081,7 @@ class TestFullCalcStamping:
 
 
 # ======================================================================
-# calc tokenizer edges (minor, unpinned): hardening cases
+# calc tokenizer edges (minor, unpinned): the hardening cases
 # ======================================================================
 
 

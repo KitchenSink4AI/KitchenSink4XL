@@ -3,8 +3,8 @@
 The centerpiece is the end-to-end: insert rows above a region holding a
 formula, a table, a conditional format, a data validation, a merge, and a
 defined name, then reload the SAVED file and verify every reference shifted
-coherently and the save verified. Plus the whole-span semantics
-(=SUM(B:B) shifting on column edits), #REF! reporting on deletes, the
+coherently and the save verified. Plus the whole-span semantics the re-audit
+fixed (=SUM(B:B) shifting on column edits), #REF! reporting on deletes, the
 `at` argument's accepted shapes, and the refusal paths (bad action/count,
 axis mismatch, out-of-grid, Excel's push-off-the-edge insert guard).
 """
@@ -222,7 +222,7 @@ def test_hazard_gate_inherited_from_the_package(tmp_path):
     import shutil
     from pathlib import Path
     from xlsx_mcp.core.errors import HazardRefused
-    corpus = Path(__file__).resolve().parents[1] / "fixtures" / "samples"
+    corpus = Path(__file__).resolve().parents[1] / "fixtures" / "workbooks"
     p = str(tmp_path / "sl.xlsx")
     shutil.copy(corpus / "pivot_slicer.xlsx", p)
     before = open(p, "rb").read()

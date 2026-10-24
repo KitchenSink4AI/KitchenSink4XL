@@ -26,7 +26,7 @@ from xlsx_mcp.ops import inspectors as _inspectors
 from xlsx_mcp.ops import lifecycle as _lifecycle
 from xlsx_mcp.ops.inspectors import _Cfb, _ovba_decompress
 
-CORPUS = os.path.join(os.path.dirname(__file__), "..", "fixtures", "samples")
+CORPUS = os.path.join(os.path.dirname(__file__), "..", "fixtures", "workbooks")
 
 END = 0xFFFFFFFE
 FREE = 0xFFFFFFFF
@@ -344,7 +344,7 @@ def test_get_pivot_describes_fixture():
     assert pv["record_count"] == 6
     assert pv["refreshed_by"] == "Zeta"
     assert pv["refreshed_at"]  # serial converted to ISO
-    assert "com pack" in out["note"]
+    assert "xl_app" in out["note"]  # the COM route, named as the tool that holds it
 
 
 def test_get_pivot_sheet_filter_and_refusal(tmp_path):

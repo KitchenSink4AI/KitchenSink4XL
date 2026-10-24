@@ -13,9 +13,10 @@ The properties pinned:
    it prevents the network call, the cache read, and the cache write.
 3. NO PRERELEASES. A prerelease is never offered to a stable build, even
    when it is the newest thing on the index.
-4. ONE SURFACE, ONLY WHEN BEHIND. get_server_info carries the line when a
-   newer stable exists and carries nothing otherwise. No other tool ever
-   mentions it.
+4. ONLY WHEN BEHIND. get_server_info carries the line when a newer stable
+   exists and carries nothing otherwise. Called directly, no other op
+   mentions it; the weekly notice on the tool surface is tested in
+   test_update_dialog.py.
 5. FAILURE IS QUIET, NOT HIDDEN. Timeouts, connection errors, HTTP
    errors, and malformed payloads raise nothing and print nothing; the
    cached-line reader stays silent, and status() reports the failure
@@ -214,8 +215,9 @@ def test_get_server_info_carries_the_line_only_when_behind():
     assert out["version"] == __version__ and "surface" in out
 
 
-def test_no_other_tool_mentions_the_update(tmp_path):
-    """The line lives in get_server_info and nowhere else."""
+def test_no_other_op_mentions_the_update_when_called_directly(tmp_path):
+    """Called directly, the line lives in get_server_info and nowhere else
+    (the surface's weekly notice: test_update_dialog.py)."""
     _write_cache("999.0.0")
     assert uc.update_notice() is not None
     book = str(tmp_path / "b.xlsx")
@@ -296,10 +298,9 @@ def test_an_unwritable_cache_dir_does_not_raise(monkeypatch):
 # ------------------------------------------------------------ plumbing
 
 
-def test_there_is_no_background_starter(monkeypatch):
-    """The check runs on demand only: no thread, no scheduler, nothing at
-    startup. run_check is synchronous and the caller owns the wait."""
-    assert not hasattr(uc, "start_background_check")
+def test_run_check_itself_is_synchronous(monkeypatch):
+    """run_check answers in the caller's thread; the background route is
+    maybe_refresh_in_background (test_update_dialog.py)."""
     monkeypatch.setattr(uc, "_fetch", lambda *a, **k: _payload("1.0", "2.0"))
     assert uc.run_check() == "2.0"
     assert uc.read_cache()["latest_version"] == "2.0"

@@ -132,7 +132,7 @@ def test_status_is_read_only(tmp_path):
 
 
 def test_reprotect_is_declarative_not_merged(tmp_path):
-    # Author field finding (io #21): a first protect's sort/auto_filter leaked
+    # A first protect's sort/auto_filter leaked
     # past a second, narrower protect because the SheetProtection object was
     # reused. Re-protect must be declarative: unlisted options revert to Excel
     # defaults, matching the module's stated contract.

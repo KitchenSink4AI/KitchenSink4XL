@@ -1,7 +1,8 @@
 """Unit tests for core/locate.py: the grid location resolver.
 
 Every selector, the ambiguity/not-found refusals, the true-used-range
-correctness vs openpyxl's dimension, and structured table refs.
+correctness vs openpyxl's dimension (the incumbent defect-11 regression), and
+structured table refs.
 """
 
 from __future__ import annotations
@@ -261,7 +262,7 @@ def test_unknown_key_refuses():
 
 
 def test_anchor_selector_round_trip_and_staleness():
-    """The anchor selector: make_anchor over a rectangle resolves
+    """The consolidation-phase anchor: make_anchor over a rectangle resolves
     back to the same rectangle while content is unchanged, refuses
     StaleAnchor on any content change or a deleted sheet, and a malformed
     token is BAD_PARAMS (XlMcpError), not a stale refusal."""

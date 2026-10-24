@@ -15,7 +15,7 @@ core/readonly.py and is not repeated here. The other three live here:
 
 * **destructiveHint** -- whether the tool may perform a destructive
   update. ONE rule decides it, and docs/TOOL_ANNOTATIONS.md states the
-  rule alongside a per-tool reason so a reviewer can dispute any single
+  rule alongside a per-tool reason so a reader can dispute any single
   row:
 
       false only when every code path either (a) adds new content or a new
@@ -43,8 +43,10 @@ core/readonly.py and is not repeated here. The other three live here:
   value and carry no action selector. Everything else is left unset rather
   than guessed.
 
-* **openWorldHint** -- false on every tool. Nothing here reaches a remote
-  service; the optional update check is not a tool.
+* **openWorldHint** -- false on every tool except xl_app, which holds
+  update_now (it reaches PyPI and GitHub when the user asks). The surface
+  plan sets the hint (surface/plan.py OPEN_WORLD_OPS); the weekly update
+  check is not a tool.
 
 An unclassified name RAISES at registration, the same contract
 core/readonly.py already holds this surface to.
@@ -79,8 +81,6 @@ TITLES: dict[str, str] = {
     "create_table":              "Create Table",
     "create_workbook":           "Create Workbook",
     "diagnose_workbook":         "Diagnose Workbook",
-    "disable_tools":             "Disable Tools",
-    "enable_tools":              "Enable Tools",
     "export_file":               "Export File",
     "export_range":              "Export Range",
     "find_cells":                "Find Cells",
@@ -124,6 +124,8 @@ TITLES: dict[str, str] = {
     "set_view":                  "Set View",
     "set_workbook_properties":   "Set Workbook Properties",
     "sort_range":                "Sort Range",
+    "update_notices":            "Update Notices",
+    "update_now":                "Update Now",
     "validate":                  "Validate Workbook",
     "write_range":               "Write Range",
 }
@@ -154,13 +156,13 @@ DESTRUCTIVE: frozenset[str] = frozenset({
 #: docs/TOOL_ANNOTATIONS.md.
 NON_DESTRUCTIVE: frozenset[str] = frozenset({
     "com_validate_opens_clean", "copy_workbook", "create_table",
-    "create_workbook", "disable_tools", "enable_tools"
+    "create_workbook", "update_notices", "update_now",
 })
 
 #: idempotentHint: true. Repeating the identical call lands the same
 #: state. Anything absent here is left UNSET rather than guessed.
 IDEMPOTENT: frozenset[str] = frozenset({
-    "disable_tools", "enable_tools", "set_cell", "set_cells",
+    "set_cell", "set_cells",
     "set_dimensions", "set_filter", "set_formula", "set_header_footer",
     "set_page_layout", "set_view", "set_workbook_properties"
 })
@@ -199,8 +201,9 @@ def idempotent_hint(name: str) -> bool | None:
 
 
 def open_world_hint(name: str) -> bool:
-    """False for every tool: this server talks to local files and to a local
-    Office installation, never to a remote service."""
+    """False for every op: this server talks to local files and to a local
+    Office installation. The one exception is the tool that holds update_now,
+    whose hint the surface plan sets (surface/plan.py OPEN_WORLD_OPS)."""
     return False
 
 

@@ -1,4 +1,5 @@
-"""Objects family tests: manage_image and manage_chart. Every mutator round-trips through the full save pipeline (hazard gate,
+"""Objects family tests: manage_image and manage_chart to the post-audit
+bar. Every mutator round-trips through the full save pipeline (hazard gate,
 backup, atomic save, verify-after-write) and is re-opened afterward to
 prove the object is really there (or really gone); refusal paths cover the
 closed-vocabulary errors; the hazard-gate interactions (picture-only
@@ -24,7 +25,7 @@ from xlsx_mcp.ops import cells as _cells
 from xlsx_mcp.ops import lifecycle as _lifecycle
 from xlsx_mcp.ops import objects as _objects
 
-CORPUS = os.path.join(os.path.dirname(__file__), "..", "fixtures", "samples")
+CORPUS = os.path.join(os.path.dirname(__file__), "..", "fixtures", "workbooks")
 
 
 def _make(tmp_path, name="w.xlsx", sheets=("Data",)):
@@ -60,7 +61,8 @@ def test_image_insert_round_trip_with_verify(tmp_path):
     # and the model sees it on a fresh open
     listing = _objects.manage_image(p, "list")
     assert listing["count"] == 1
-    assert listing["images"][0]["anchor"] == "B2"
+    # The cell is at_cell.
+    assert listing["images"][0]["at_cell"] == "B2"
     assert listing["images"][0]["format"] == "png"
 
 
@@ -91,9 +93,11 @@ def test_second_insert_downgrades_gate_and_preserves_first(tmp_path):
     assert len(media) == 2
 
 
+@pytest.mark.usefixtures("rewrite_route")
 def test_other_tools_still_refuse_on_image_workbook(tmp_path):
     """The downgrade is scoped to manage_image; a plain cell write on an
-    image workbook keeps the conservative refusal."""
+    image workbook keeps the conservative refusal (the standing posture,
+    flagged for the author)."""
     p = _make(tmp_path)
     _objects.manage_image(p, "insert", image_file=_png(tmp_path),
                           location={"cell": "B2"})
@@ -113,7 +117,7 @@ def test_image_delete_by_anchor_and_index(tmp_path):
     assert out["verified"] is True
     assert out["changed"]["images_on_sheet"] == 1
     left = _objects.manage_image(p, "list")["images"]
-    assert [i["anchor"] for i in left] == ["D8"]
+    assert [i["at_cell"] for i in left] == ["D8"]  # at_cell
     out = _objects.manage_image(p, "delete", sheet="Data", index=1)
     assert _objects.manage_image(p, "list")["count"] == 0
     # the media parts are gone from the package (a deliberate removal the
@@ -209,7 +213,9 @@ def test_chart_create_round_trip_with_verify(tmp_path):
     listing = _objects.manage_chart(p, "list")
     assert listing["count"] == 1
     ch = listing["charts"][0]
-    assert ch["type"] == "BarChart" and ch["title"] == "Sales"
+    # List speaks create's
+    # vocabulary (chart_type, at_cell).
+    assert ch["chart_type"] == "bar" and ch["title"] == "Sales"
     # and openpyxl itself re-parses the produced package cleanly
     wb = openpyxl.load_workbook(p)
     assert len(wb["Data"]._charts) == 1
@@ -229,8 +235,10 @@ def test_chart_types_all_survive(tmp_path, ctype, cls):
                                 data={"range": "B1:C4"}, anchor="F2")
     assert out["verified"] is True
     listing = _objects.manage_chart(p, "list")
-    assert listing["charts"][0]["type"] == cls
-    assert listing["charts"][0]["anchor"] == "F2"
+    # The listed type is the
+    # chart_type create took, and the cell is at_cell.
+    assert listing["charts"][0]["chart_type"] == ctype
+    assert listing["charts"][0]["at_cell"] == "F2"
 
 
 def _chart_xml(path, part="xl/charts/chart1.xml"):
@@ -304,6 +312,7 @@ def test_axis_free_chart_types_do_not_crash(tmp_path, ctype, show_axes):
     wb.close()
 
 
+@pytest.mark.usefixtures("rewrite_route")
 def test_chart_survives_subsequent_cell_edit(tmp_path):
     """After creating a chart the workbook holds a degrade hazard; a later
     cell edit proceeds with the degrade warning and the chart part

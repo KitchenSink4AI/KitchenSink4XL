@@ -1,11 +1,12 @@
-"""Regression for the save-time scan of self-closing styled cells.
+"""Regressions for save-scan performance.
 
 Every mutating save of an Excel-authored workbook with trailing styled
-EMPTY cells (written self-closing, as some accounting exports do) used to
-run a catastrophic regex scan in core/calc.py restore_always_calc_cache:
-over 28 CPU-minutes at 60,000 rows, on ANY mutation. Fixed two ways: the
-cell regex handles self-closing cells without a lazy scan-to-EOF, and a
-ca="1" prefilter skips the walk entirely on the (common) ca-free file.
+EMPTY cells (written self-closing, the QuickBooks-export scar) detonated a
+catastrophic regex scan in core/calc.py restore_always_calc_cache: >28
+CPU-minutes at the realistic 60,000-row scale, on ANY mutation. Fixed two
+ways: the cell regex handles self-closing cells without a lazy
+scan-to-EOF, and a ca="1" prefilter skips the walk entirely on the (common)
+ca-free file.
 """
 
 from __future__ import annotations
@@ -52,13 +53,13 @@ def _sheet_xml(path: Path) -> str:
 
 
 # ======================================================================
-# the catastrophic _CELL_RE scan
+# The catastrophic _CELL_RE scan
 # ======================================================================
 
 
 def _make_qb_shape(path: Path, rows: int = 60000, cols: int = 8,
                    with_ca: bool = False) -> Path:
-    """An accounting-export shape: a small data block plus trailing styled
+    """The QuickBooks-export scar: a small data block plus trailing styled
     EMPTY cells written SELF-CLOSING (<c r="A66" s="0"/>), the way real
     Excel writes them. Built programmatically; never committed to git."""
     wb = openpyxl.Workbook()
@@ -109,14 +110,33 @@ class TestCatastrophicScanFixed:
         assert dt < 5.0, (
             f"restore_always_calc_cache used {dt:.1f} CPU seconds")
 
-    def test_prefilter_skips_ca_free_parts(self, tmp_path):
-        book = _make_qb_shape(tmp_path / "qb_nca.xlsx", with_ca=False)
-        copy = tmp_path / "qb_nca_copy.xlsx"
-        shutil.copy2(book, copy)
-        t0 = time.perf_counter()
-        core_calc.restore_always_calc_cache(str(book), str(copy))
-        dt = time.perf_counter() - t0
-        assert dt < 2.0, f"ca-free prefilter path took {dt:.1f}s"
+    def test_prefilter_skips_ca_free_parts(self, tmp_path, monkeypatch):
+        # This was a wall-clock bound (2.0 s),
+        # which a loaded machine can miss with nothing wrong. What the
+        # prefilter promises is that a ca-free part is never walked at all,
+        # so the test counts the walks instead: none for the ca-free book,
+        # and at least one for the same shape with a ca="1" cell (the
+        # control, so a counter that never counts cannot pass).
+        walks = []
+        real = core_calc._CELL_RE
+
+        class _Counting:
+            def finditer(self, *a, **k):
+                walks.append(1)
+                return real.finditer(*a, **k)
+
+            def __getattr__(self, name):
+                return getattr(real, name)
+
+        monkeypatch.setattr(core_calc, "_CELL_RE", _Counting())
+        for with_ca, expect_walk in ((False, False), (True, True)):
+            walks.clear()
+            book = _make_qb_shape(tmp_path / f"qb_{with_ca}.xlsx", rows=2000,
+                                  with_ca=with_ca)
+            copy = tmp_path / f"qb_{with_ca}_copy.xlsx"
+            shutil.copy2(book, copy)
+            core_calc.restore_always_calc_cache(str(book), str(copy))
+            assert bool(walks) is expect_walk, (with_ca, len(walks))
 
     def test_plain_set_cell_completes_at_the_60k_shape(self, tmp_path):
         # End to end: the report's repro was ANY mutation hanging >28 min.

@@ -63,6 +63,7 @@ import argparse
 import ast
 import importlib
 import json
+import pathlib
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -83,6 +84,9 @@ def configure(root: Path):
     SRC = root / "src"
     SERVER_PY = SRC / PKG / "server.py"
     sys.path.insert(0, str(SRC))
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+    import _bootstrap
+    _bootstrap.use_community()
     server_mod = importlib.import_module(f"{PKG}.server")
     return server_mod
 
@@ -99,8 +103,9 @@ DISPATCH_NAMES = (
 EXCLUDE = {"enable_tools", "disable_tools"}
 
 
-def _decorated_with_tool(node: ast.FunctionDef, decorator: str = "_tool") -> bool:
-    """True when the function carries the checkout's tool decorator."""
+def _decorated_with_tool(node: ast.FunctionDef, decorator: str = "_op") -> bool:
+    """True when the function carries the checkout's op decorator (2.0 family
+    surface: @_op; 1.x: @_tool(pack), selectable with --decorator _tool)."""
     attr = decorator.split(".")[-1]
     for dec in node.decorator_list:
         target = dec.func if isinstance(dec, ast.Call) else dec
@@ -266,7 +271,7 @@ def _delegate_values(fn: ast.FunctionDef, aliases, modules):
 def _element_values(fn: ast.FunctionDef, param: str, module_obj):
     """Dispatch values validated for the ELEMENTS of a caller-supplied list.
 
-    The battery pattern: `validate(checks=[...])` takes a list and the ops
+    The list-of-checks pattern: `validate(checks=[...])` takes a list and the ops
     layer does `for check in checks: if check not in _CHECKS: refuse`. The
     caller dispatches one operation per element, and the evidence is the same
     membership test against a committed table the parameter scan already
@@ -488,7 +493,7 @@ def _dispatch_values(fn: ast.FunctionDef, aliases, modules):
     return best, sorted(found[best])
 
 
-def measure(decorator: str = "_tool") -> dict:
+def measure(decorator: str = "_op") -> dict:
     tree = ast.parse(SERVER_PY.read_text(encoding="utf-8"))
     tool_fns = {
         n.name: n
@@ -546,7 +551,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--root", default=str(ROOT),
                     help="checkout to measure (default: this repo)")
-    ap.add_argument("--decorator", default="_tool",
+    ap.add_argument("--decorator", default="_op",
                     help="tool decorator to look for")
     ap.add_argument("--label", default="")
     ap.add_argument("--json", dest="json_out",

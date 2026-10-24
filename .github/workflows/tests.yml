@@ -1,31 +1,115 @@
 name: Tests
 
-# Runs the KitchenSink4XL test suite.
+# This workflow runs the KitchenSink4XL suite and nothing else. The KS4Word
+# and KS4PPT suites live in their own repositories and must never share a job
+# with this one: all three install a FastMCP server package into the same
+# interpreter, and a shared job resolves one set of pins for three servers.
 on:
   push:
     branches: [main]
+    # A release-candidate tag runs the full matrix.
+    tags: ["v*rc*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      full:
+        description: "Run the full matrix (Python 3.12, 3.13, 3.14 on Windows and Ubuntu)"
+        type: boolean
+        default: false
+
+# CI throttle (Actions minutes are rationed): one run per branch
+# or PR at a time, a newer push cancels the older run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The public repository carries the Community edition only (no Business adapter,
+  # launcher or tests); private staging keeps both editions.
+  KS4_ADAPTER_EDITION: ${{ github.repository == 'KitchenSink4AI/KitchenSink4XL' && 'community' || 'all' }}
 
 jobs:
   test:
     strategy:
       fail-fast: false
-      # Three platforms, Python 3.12 (the minimum) and 3.14. The file tier is
-      # platform-neutral; the COM tests are marked `com` and skip themselves
-      # off Windows.
+      # INTERIM MATRIX (the CI throttle): one Windows leg and one Ubuntu leg
+      # on the newest Python for every push and pull request. The full
+      # matrix, Python 3.12, 3.13 and 3.14 on both, runs only when asked for
+      # (workflow_dispatch with full: true) or on a release-candidate tag,
+      # never on a plain push. No macOS legs: the file tier is pure openpyxl
+      # and platform-neutral, and the COM tests are marked `com` and skip
+      # themselves off Windows. tests/unit/test_deadline_sites_and_served_hints.py pins this.
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        python: ["3.12", "3.14"]
+        os: [ubuntu-latest, windows-latest]
+        python: ${{ fromJSON(((github.event_name == 'workflow_dispatch' && inputs.full) || startsWith(github.ref, 'refs/tags/')) && '["3.12", "3.13", "3.14"]' || '["3.14"]') }}
     runs-on: ${{ matrix.os }}
+    # Every job is bounded; a hung COM or stdio test cannot wedge a runner.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
+      # Private staging: both adapters from the staging-only export branch.
+      - name: License adapters (pinned content, digest-checked)
+        if: github.repository != 'KitchenSink4AI/KitchenSink4XL'
+        uses: actions/checkout@v7
+        with:
+          ref: ci/license-adapters-9c7dc45
+          path: _adapters_checkout
+      # The license policy adapters are ONE shared source pinned by
+      # scripts/adapter_source.py and never copied into this tree. CI reads
+      # the export on this repository's ci/license-adapters-9c7dc45 branch;
+      # adapter_source verifies it against ADAPTER_DIGEST before any use.
+      # It goes to the runner's temp folder, an absolute path with no '..'
+      # in it, so the tests that prove the adapters come from outside this
+      # checkout compare real locations.
+      - name: Move the adapters outside the source tree
+        if: github.repository != 'KitchenSink4AI/KitchenSink4XL'
+        shell: bash
+        run: |
+          mv _adapters_checkout "$RUNNER_TEMP/ks4-license-adapters"
+          echo "KS4_LICENSE_ADAPTERS=$RUNNER_TEMP/ks4-license-adapters" >> "$GITHUB_ENV"
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
+      # The Community license adapter is one shared source, read from the reviewed public
+      # KitchenSink4Word release commit that scripts/adapter_source.py pins
+      # (PUBLIC_ADAPTER_COMMIT) and checked against COMMUNITY_DIGEST before any use.
+      # The Business adapter is never part of a public run.
+      - name: Community license adapter pin
+        id: adapter-pin
+        if: github.repository == 'KitchenSink4AI/KitchenSink4XL'
+        shell: bash
+        run: python scripts/adapter_source.py --public-pin >> "$GITHUB_OUTPUT"
+      - name: Community license adapter (pinned public commit)
+        if: github.repository == 'KitchenSink4AI/KitchenSink4XL'
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ steps.adapter-pin.outputs.repository }}
+          ref: ${{ steps.adapter-pin.outputs.commit }}
+          path: _adapter_source
+          persist-credentials: false
+      - name: Move the Community adapter outside the source tree
+        if: github.repository == 'KitchenSink4AI/KitchenSink4XL'
+        shell: bash
+        env:
+          PIN_COMMIT: ${{ steps.adapter-pin.outputs.commit }}
+          PIN_PATH: ${{ steps.adapter-pin.outputs.path }}
+        run: |
+          set -euo pipefail
+          test "$(git -C _adapter_source rev-parse HEAD)" = "$PIN_COMMIT"
+          mkdir "$RUNNER_TEMP/ks4-license-adapters"
+          cp -r "_adapter_source/$PIN_PATH" "$RUNNER_TEMP/ks4-license-adapters/"
+          rm -rf _adapter_source
+          echo "KS4_LICENSE_ADAPTERS=$RUNNER_TEMP/ks4-license-adapters" >> "$GITHUB_ENV"
+      - name: Check the Community adapter against its recorded digest
+        if: github.repository == 'KitchenSink4AI/KitchenSink4XL'
+        shell: bash
+        run: python scripts/adapter_source.py
       - name: Install
-        # The com extra is not installed: the COM tier needs Windows with
-        # Excel, which a runner does not have. Its tests skip themselves.
+        # The com extra is deliberately not installed: the COM tier needs
+        # Windows with Excel and an interactive desktop, neither of which a
+        # runner has. Its tests are marked `com` and skip themselves.
         run: pip install -e ".[dev]"
       - name: Run test suite
+        # tests/unit only. tests/com_gates drives a real Excel and is a
+        # local gate, never a CI job.
         run: python -m pytest tests/unit -q

@@ -1,7 +1,7 @@
 """Unit tests for the COM tier's headless-safe surface.
 
 NO test here spawns Excel (the suite must stay green in headless CI and must
-never touch a machine's Excel). Covered:
+never touch the author's machine's Excel outside the com_gates). Covered:
 argument validation and refusal paths that fire BEFORE any COM call, the
 executor's serialization/timeout/re-arm mechanics driven with plain Python
 functions, the stale-lockfile guard, com_status shape, the verify_com wiring
@@ -85,16 +85,22 @@ def test_pivot_delete_needs_name(tmp_path):
 
 def test_recalculate_bad_engine(tmp_path):
     p = _book(tmp_path / "b.xlsx")
-    with pytest.raises(XlMcpError, match="engine"):
+    with pytest.raises(XlMcpError) as ei:
         comtier.recalculate(p, engine="prayer")
+    assert str(ei.value) == "engine must be 'auto' or 'com', got 'prayer'"
 
 
-def test_recalculate_com_refuses_when_unavailable(tmp_path, monkeypatch):
+@pytest.mark.parametrize("engine", ["com", "auto"])
+def test_recalculate_com_refuses_when_unavailable(engine, tmp_path, monkeypatch):
     p = _book(tmp_path / "b.xlsx")
     monkeypatch.setattr(com_session, "com_available",
                         lambda refresh=False: (False, "test says no"))
-    with pytest.raises(CalcUnavailable, match="test says no"):
-        comtier.recalculate(p, engine="com")
+    with pytest.raises(CalcUnavailable) as ei:
+        comtier.recalculate(p, engine=engine)
+    assert str(ei.value) == (
+        "Recalculation needs Windows with Microsoft Excel, and Excel is not available "
+        "here. Reads still return each formula's cached value, labelled cached.")
+    assert ei.value.details == {"excel_unavailable": "test says no"}
 
 
 def test_export_pdf_bad_scope_and_existing_output(tmp_path):
@@ -165,16 +171,15 @@ def test_guard_stale_lockfile_degrades_to_warning(tmp_path):
 
 
 def test_guard_truly_locked_refuses(tmp_path, monkeypatch):
+    """A held file refuses. The guard probes the way Excel opens a file, so
+    the hold is simulated at that probe rather than at
+    builtins.open; Excel's owner file beside it makes it "open in Excel"."""
+    from xlsx_mcp.core import access as _access
+
     p = Path(_book(tmp_path / "b.xlsx"))
-
-    real_open = open
-
-    def deny(*args, **kwargs):
-        if args and str(args[0]) == str(p) and "r+" in str(args[1:2]):
-            raise PermissionError("locked by Excel")
-        return real_open(*args, **kwargs)
-
-    monkeypatch.setattr("builtins.open", deny)
+    (p.parent / ("~$" + p.name)).write_bytes(b"owner record")
+    monkeypatch.setattr(_access, "write_block",
+                        lambda path, deny_writers=False: _access.IN_USE)
     with pytest.raises(WorkbookLocked, match="open in Excel"):
         com_session.guard_target_closed(str(p))
 
@@ -332,19 +337,23 @@ def test_iterative_calc_bounds(tmp_path):
         properties.set_workbook_properties(p, max_change=-1)
 
 
-# --------------------------------------------------- formulas fallback
+# ------------------------------------------- the removed formulas engine
 
 
-def test_recalculate_formulas_engine_reads_without_writing(tmp_path):
-    pytest.importorskip("formulas")
+@pytest.mark.parametrize("spelling", ["formulas", " Formulas "])
+def test_recalculate_refuses_the_removed_formulas_engine(spelling, tmp_path):
+    """engine='formulas' was removed in 2.0.0: refused with the next step,
+    the file unchanged. test_xml_hardening proves nothing reaches the
+    library on any route."""
     p = _book(tmp_path / "b.xlsx")
     before = Path(p).read_bytes()
-    result = comtier.recalculate(p, engine="formulas")
-    assert result["ok"] is True
-    assert result["saved"] is False
-    assert result["engine"] == "formulas"
-    assert Path(p).read_bytes() == before, \
-        "the formulas engine must never modify the file"
+    with pytest.raises(CalcUnavailable) as ei:
+        comtier.recalculate(p, engine=spelling)
+    assert str(ei.value) == (
+        "The formulas engine was removed in 2.0.0. Recalculation needs Windows with "
+        "Microsoft Excel: use engine 'com' or 'auto'. Reads still return each formula's "
+        "cached value, labelled cached.")
+    assert Path(p).read_bytes() == before
 
 
 # ------------------------------------------------ blank render detection
@@ -436,7 +445,7 @@ def test_render_refuses_and_removes_the_file_when_the_png_is_blank(
     p = _book(tmp_path / "b.xlsx")
     out = tmp_path / "render.png"
 
-    def fake_run(label, path, body, timeout=None):
+    def fake_run(label, path, body, timeout=None, **_kw):
         out.write_bytes(_png(2177, 348, 6))
         return {"rendered": str(out), "range": "$A$1:$A$3", "sheet": "Data"}
 
@@ -454,7 +463,7 @@ def test_render_accepts_a_picture_with_real_content(tmp_path, monkeypatch):
     p = _book(tmp_path / "b.xlsx")
     out = tmp_path / "render.png"
 
-    def fake_run(label, path, body, timeout=None):
+    def fake_run(label, path, body, timeout=None, **_kw):
         out.write_bytes(_png(546, 154, 80))
         return {"rendered": str(out), "range": "$A$1:$A$3", "sheet": "Data"}
 

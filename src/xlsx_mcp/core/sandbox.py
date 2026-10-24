@@ -1,7 +1,10 @@
 """Opt-in path sandboxing governed by the KS4XL_ALLOWED_ROOTS environment
 variable.
 
-The canonicalization logic is format-agnostic.
+Ported VERBATIM from KitchenSink4Word core/sandbox.py; only the env-var
+name changed (KS4W_ALLOWED_ROOTS -> KS4XL_ALLOWED_ROOTS) and the error base
+(WordMcpError -> XlMcpError). The canonicalization logic is format-agnostic
+and battle-tested in two shipped siblings, so it is not re-derived here.
 
 When KS4XL_ALLOWED_ROOTS is unset (or empty), nothing here restricts
 anything: check_path returns its input untouched. When it is set to an
@@ -142,6 +145,55 @@ def _contained(root_canonical: str, candidate_canonical: str) -> bool:
 # ------------------------------------------------------------------- check
 
 
+#: Reserved Windows device names. A path whose last
+#: component is one of these does not address a file: an INPUT path "CON" or
+#: "CONIN$" blocked on a console read until the call's deadline and left the
+#: thread stuck for the life of the server; an OUTPUT path swallowed the
+#: write (core/outguard.py). Windows matches on the stem, case-insensitively,
+#: with trailing dots and spaces stripped.
+WINDOWS_DEVICE_NAMES = frozenset({
+    "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$", "CLOCK$",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+})
+
+
+#: Device-namespace prefixes, in either slash spelling.
+_DEVICE_PREFIXES = ("\\\\.\\", "\\\\?\\", "//./", "//?/", "\\??\\")
+
+
+def device_namespace(path: str | os.PathLike) -> bool:
+    r"""True for a path in the Windows device namespace (\\.\..., //./...,
+    \??\...) or under the \\?\GLOBALROOT object-manager root. The
+    \\?\ long-path prefix on a drive or UNC path is NOT the device
+    namespace and answers False."""
+    text = os.fspath(path).strip().replace("/", "\\")
+    if text.startswith("\\\\.\\") or text.startswith("\\??\\"):
+        return True
+    if text.startswith("\\\\?\\"):
+        rest = text[4:].lstrip("\\")
+        return rest.split("\\", 1)[0].upper() == "GLOBALROOT"
+    return False
+
+
+def device_name(path: str | os.PathLike) -> str | None:
+    r"""The reserved device name a path's last component names, or None.
+
+    The device namespace (\\.\CON, \\?\CONIN$) and a
+    trailing colon (CON:, CONIN$:) name the same devices; os.path.basename
+    alone returned nothing for the first and kept the colon on the second,
+    so both hung until the call deadline."""
+    text = os.fspath(path).strip()
+    for prefix in _DEVICE_PREFIXES:
+        if text.startswith(prefix):
+            text = text[len(prefix):]
+            break
+    text = text.rstrip("\\/").rstrip(": ")
+    name = text.replace("/", "\\").rsplit("\\", 1)[-1]
+    stem = name.split(".")[0].strip().rstrip(".: ").upper()
+    return stem if stem in WINDOWS_DEVICE_NAMES else None
+
+
 def check_path(path: str | os.PathLike, purpose: str = "access") -> str:
     """Gate one path. Returns the path unchanged when sandboxing is off;
     returns the canonicalized path when it is on and the path is inside an
@@ -154,6 +206,22 @@ def check_path(path: str | os.PathLike, purpose: str = "access") -> str:
         raise SandboxViolation(
             f"refusing to {purpose}: path contains a null byte"
         )
+    if os.name == "nt":
+        # The device namespace (\\.\ and \??\) and the
+        # \\?\GLOBALROOT object-manager root never address a workbook, and a
+        # console behind them (\\.\GLOBALROOT\Device\ConDrv\Console) blocked
+        # a read until the call deadline. Refused outright. The \\?\ long-path
+        # form of an ordinary path (\\?\C:\..., \\?\UNC\...) keeps working.
+        if device_namespace(p):
+            raise XlMcpError(
+                f"refusing to {purpose}: {p} is a Windows device path, not a file. "
+                "Pass the path of a real file.")
+        # Before any open, on every path this server is handed.
+        device = device_name(p)
+        if device is not None:
+            raise XlMcpError(
+                f"refusing to {purpose}: {p} names the reserved Windows device "
+                f"{device}, not a file. Pass the path of a real file.")
     roots = _allowed_roots()
     if not roots:
         return p

@@ -34,7 +34,11 @@ def test_add_cell_is_and_list(book):
     assert r["ok"] and r["verified"]
     listing = cf.manage_conditional_format(str(book), "list")
     assert listing["count"] == 1
-    assert listing["rules"][0]["type"] == "cellIs"
+    # List speaks add's vocabulary and
+    # says what the rule does (operator, formula, fill), snake_case values.
+    rule = listing["rules"][0]
+    assert rule["cf_type"] == "cell_is" and rule["operator"] == "greater_than"
+    assert rule["formula"] == ["20"] and rule["fill"].endswith("FF0000")
 
 
 def test_add_each_type(book):

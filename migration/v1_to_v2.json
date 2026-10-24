@@ -1,0 +1,384 @@
+{
+ "from": "kitchensink4xl 1.2.5",
+ "to": "kitchensink4xl 2.0",
+ "call_shape": "tool(op=<op>, args={...})",
+ "tools": {
+  "apply_edits": {
+   "tool": "xl_edit",
+   "op": "apply_edits",
+   "args_changed": null
+  },
+  "apply_style": {
+   "tool": "xl_format",
+   "op": "apply_style",
+   "args_changed": null
+  },
+  "audit_formulas": {
+   "tool": "xl_read",
+   "op": "audit_formulas",
+   "args_changed": null
+  },
+  "audit_styles": {
+   "tool": "xl_read",
+   "op": "audit_styles",
+   "args_changed": null
+  },
+  "clear_filter": {
+   "tool": "xl_structure",
+   "op": "clear_filter",
+   "args_changed": null
+  },
+  "clear_range": {
+   "tool": "xl_edit",
+   "op": "clear_range",
+   "args_changed": null
+  },
+  "com_autofit": {
+   "tool": "xl_app",
+   "op": "com_autofit",
+   "args_changed": null
+  },
+  "com_convert_format": {
+   "tool": "xl_app",
+   "op": "com_convert_format",
+   "args_changed": null
+  },
+  "com_export_pdf": {
+   "tool": "xl_app",
+   "op": "com_export_pdf",
+   "args_changed": null
+  },
+  "com_goal_seek": {
+   "tool": "xl_app",
+   "op": "com_goal_seek",
+   "args_changed": null
+  },
+  "com_manage_pivot": {
+   "tool": "xl_app",
+   "op": "com_manage_pivot",
+   "args_changed": null
+  },
+  "com_render_sheet": {
+   "tool": "xl_app",
+   "op": "com_render_sheet",
+   "args_changed": null
+  },
+  "com_save_with_password": {
+   "tool": "xl_app",
+   "op": "com_save_with_password",
+   "args_changed": null
+  },
+  "com_set_sparkline": {
+   "tool": "xl_app",
+   "op": "com_set_sparkline",
+   "args_changed": null
+  },
+  "com_status": {
+   "tool": "xl_read",
+   "op": "com_status",
+   "args_changed": null
+  },
+  "com_validate_opens_clean": {
+   "tool": "xl_app",
+   "op": "com_validate_opens_clean",
+   "args_changed": null
+  },
+  "copy_format": {
+   "tool": "xl_format",
+   "op": "copy_format",
+   "args_changed": null
+  },
+  "copy_range": {
+   "tool": "xl_edit",
+   "op": "copy_range",
+   "args_changed": null
+  },
+  "copy_workbook": {
+   "tool": "xl_workbook",
+   "op": "copy_workbook",
+   "args_changed": null
+  },
+  "create_table": {
+   "tool": "xl_structure",
+   "op": "create_table",
+   "args_changed": null
+  },
+  "create_workbook": {
+   "tool": "xl_workbook",
+   "op": "create_workbook",
+   "args_changed": null
+  },
+  "diagnose_workbook": {
+   "tool": "xl_read",
+   "op": "diagnose_workbook",
+   "args_changed": null
+  },
+  "disable_tools": {
+   "tool": null,
+   "op": null,
+   "args_changed": null,
+   "reason": "removed: every operation is available from the start"
+  },
+  "enable_tools": {
+   "tool": null,
+   "op": null,
+   "args_changed": null,
+   "reason": "removed: every operation is available from the start"
+  },
+  "export_file": {
+   "tool": "xl_workbook",
+   "op": "export_file",
+   "args_changed": null
+  },
+  "export_range": {
+   "tool": "xl_workbook",
+   "op": "export_range",
+   "args_changed": null
+  },
+  "find_cells": {
+   "tool": "xl_read",
+   "op": "find_cells",
+   "args_changed": null
+  },
+  "format_cells": {
+   "tool": "xl_format",
+   "op": "format_cells",
+   "args_changed": null
+  },
+  "get_cells": {
+   "tool": "xl_read",
+   "op": "get_cells",
+   "args_changed": null
+  },
+  "get_connections": {
+   "tool": "xl_read",
+   "op": "get_connections",
+   "args_changed": null
+  },
+  "get_external_links": {
+   "tool": "xl_read",
+   "op": "get_external_links",
+   "args_changed": null
+  },
+  "get_grid_view": {
+   "tool": "xl_read",
+   "op": "get_grid_view",
+   "args_changed": null
+  },
+  "get_pivot": {
+   "tool": "xl_read",
+   "op": "get_pivot",
+   "args_changed": null
+  },
+  "get_server_info": {
+   "tool": "xl_read",
+   "op": "get_server_info",
+   "args_changed": null
+  },
+  "get_table": {
+   "tool": "xl_read",
+   "op": "get_table",
+   "args_changed": null
+  },
+  "get_workbook_metadata": {
+   "tool": "xl_read",
+   "op": "get_workbook_metadata",
+   "args_changed": null
+  },
+  "get_workflows": {
+   "tool": "xl_read",
+   "op": "get_workflows",
+   "args_changed": null
+  },
+  "import_data": {
+   "tool": "xl_edit",
+   "op": "import_data",
+   "args_changed": null
+  },
+  "inspect_vba": {
+   "tool": "xl_read",
+   "op": "inspect_vba",
+   "args_changed": null
+  },
+  "manage_backups": {
+   "tool": "xl_workbook",
+   "op": "manage_backups",
+   "args_changed": null
+  },
+  "manage_chart": {
+   "tool": "xl_format",
+   "op": "manage_chart",
+   "args_changed": {
+    "anchor": "at_cell"
+   }
+  },
+  "manage_comment": {
+   "tool": "xl_format",
+   "op": "manage_comment",
+   "args_changed": null
+  },
+  "manage_conditional_format": {
+   "tool": "xl_format",
+   "op": "manage_conditional_format",
+   "args_changed": {
+    "params.operator=notBetween": "params.operator=not_between",
+    "params.operator=notEqual": "params.operator=not_equal",
+    "params.operator=greaterThan": "params.operator=greater_than",
+    "params.operator=lessThan": "params.operator=less_than",
+    "params.operator=greaterThanOrEqual": "params.operator=greater_than_or_equal",
+    "params.operator=lessThanOrEqual": "params.operator=less_than_or_equal",
+    "params.operator=containsText": "params.operator=contains_text",
+    "params.operator=notContains": "params.operator=not_contains",
+    "params.operator=beginsWith": "params.operator=begins_with",
+    "params.operator=endsWith": "params.operator=ends_with",
+    "params.period=last7Days": "params.period=last_7_days",
+    "params.period=thisWeek": "params.period=this_week",
+    "params.period=lastWeek": "params.period=last_week",
+    "params.period=nextWeek": "params.period=next_week",
+    "params.period=thisMonth": "params.period=this_month",
+    "params.period=lastMonth": "params.period=last_month",
+    "params.period=nextMonth": "params.period=next_month"
+   }
+  },
+  "manage_data_validation": {
+   "tool": "xl_structure",
+   "op": "manage_data_validation",
+   "args_changed": {
+    "dv_type=textLength": "dv_type=text_length",
+    "operator=notBetween": "operator=not_between",
+    "operator=notEqual": "operator=not_equal",
+    "operator=greaterThan": "operator=greater_than",
+    "operator=lessThan": "operator=less_than",
+    "operator=greaterThanOrEqual": "operator=greater_than_or_equal",
+    "operator=lessThanOrEqual": "operator=less_than_or_equal"
+   }
+  },
+  "manage_hyperlink": {
+   "tool": "xl_format",
+   "op": "manage_hyperlink",
+   "args_changed": null
+  },
+  "manage_image": {
+   "tool": "xl_format",
+   "op": "manage_image",
+   "args_changed": null
+  },
+  "manage_name": {
+   "tool": "xl_structure",
+   "op": "manage_name",
+   "args_changed": null
+  },
+  "manage_table": {
+   "tool": "xl_structure",
+   "op": "manage_table",
+   "args_changed": null
+  },
+  "manage_worksheet": {
+   "tool": "xl_structure",
+   "op": "manage_worksheet",
+   "args_changed": null
+  },
+  "modify_grid_structure": {
+   "tool": "xl_structure",
+   "op": "modify_grid_structure",
+   "args_changed": null
+  },
+  "move_range": {
+   "tool": "xl_edit",
+   "op": "move_range",
+   "args_changed": null
+  },
+  "query_range": {
+   "tool": "xl_read",
+   "op": "query_range",
+   "args_changed": null
+  },
+  "read_range": {
+   "tool": "xl_read",
+   "op": "read_range",
+   "args_changed": null
+  },
+  "recalculate": {
+   "tool": "xl_app",
+   "op": "recalculate",
+   "args_changed": null
+  },
+  "replace_cells": {
+   "tool": "xl_edit",
+   "op": "replace_cells",
+   "args_changed": null
+  },
+  "set_cell": {
+   "tool": "xl_edit",
+   "op": "set_cell",
+   "args_changed": null
+  },
+  "set_cells": {
+   "tool": "xl_edit",
+   "op": "set_cells",
+   "args_changed": null
+  },
+  "set_dimensions": {
+   "tool": "xl_format",
+   "op": "set_dimensions",
+   "args_changed": null
+  },
+  "set_filter": {
+   "tool": "xl_structure",
+   "op": "set_filter",
+   "args_changed": null
+  },
+  "set_formula": {
+   "tool": "xl_edit",
+   "op": "set_formula",
+   "args_changed": null
+  },
+  "set_header_footer": {
+   "tool": "xl_workbook",
+   "op": "set_header_footer",
+   "args_changed": null
+  },
+  "set_merge": {
+   "tool": "xl_format",
+   "op": "set_merge",
+   "args_changed": null
+  },
+  "set_page_layout": {
+   "tool": "xl_workbook",
+   "op": "set_page_layout",
+   "args_changed": null
+  },
+  "set_protection": {
+   "tool": "xl_workbook",
+   "op": "set_protection",
+   "args_changed": null
+  },
+  "set_view": {
+   "tool": "xl_format",
+   "op": "set_view",
+   "args_changed": null
+  },
+  "set_workbook_properties": {
+   "tool": "xl_workbook",
+   "op": "set_workbook_properties",
+   "args_changed": {
+    "calc_mode=autoNoTable": "calc_mode=auto_no_table"
+   }
+  },
+  "sort_range": {
+   "tool": "xl_structure",
+   "op": "sort_range",
+   "args_changed": null
+  },
+  "validate": {
+   "tool": "xl_read",
+   "op": "validate",
+   "args_changed": null
+  },
+  "write_range": {
+   "tool": "xl_edit",
+   "op": "write_range",
+   "args_changed": null
+  }
+ }
+}

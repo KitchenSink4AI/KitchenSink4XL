@@ -1,0 +1,42 @@
+{
+  "note": "Signed with the PRE-SPLIT canonicalization at commit 8389dcc. A receipt that verified before must verify identically after.",
+  "seed_hex": "6b73342d786c2d73706c69742d726563656970742d6669787475726521212121",
+  "public_key_b64": "WqBsb+X1n8J716Yh6CWsrJDaxJlmlRjL5Okk4G8f3lQ=",
+  "key_id": "fixture-key",
+  "build": {
+    "edition": "business",
+    "package": "kitchensink4xl-business",
+    "version": "1.2.2+business",
+    "release_date": "2026-09-10",
+    "public_keys": {
+      "fixture-key": "WqBsb+X1n8J716Yh6CWsrJDaxJlmlRjL5Okk4G8f3lQ="
+    }
+  },
+  "expected": {
+    "covered": {
+      "status": "verified",
+      "perpetual": true,
+      "updates_through": "2027-01-15",
+      "build_covered": true,
+      "licensed_to": "Fixture Holdings Ltd"
+    },
+    "updates_not_covered": {
+      "status": "updates_not_covered",
+      "perpetual": true,
+      "updates_through": "2025-01-15",
+      "build_covered": false,
+      "licensed_to": "Fixture Holdings Ltd"
+    },
+    "unicode_licensee": {
+      "status": "verified",
+      "perpetual": true,
+      "updates_through": "2027-01-15",
+      "build_covered": true,
+      "licensed_to": "\u00c9ditions Fixture S.A."
+    },
+    "wrong_product": {
+      "error": "ValueError",
+      "message": "Wrong receipt schema or product"
+    }
+  }
+}

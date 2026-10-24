@@ -1,14 +1,19 @@
-"""Conditional-format rule types and row/column grouping.
+"""The two capability gaps 1.1 closes, both of them enum gaps rather than
+library ceilings.
 
-Conditional formatting supports all twelve base rule types, including
-unique, duplicate, above-average, time-period, blanks and errors. Every one
-of them is a button in Excel's Highlight Cells or Top/Bottom menu, and
-openpyxl's formatting/rule.py accepts all twelve.
+Conditional formatting shipped six of Excel's twelve base rule types.
+openpyxl's formatting/rule.py has accepted all twelve since long before
+this server existed, so the missing six (unique, duplicate, above-average,
+time-period, blanks, errors) were absent from KS4XL's own enum, not from
+what the file format or the library can express. Every one of them is a
+button in Excel's Highlight Cells or Top/Bottom menu.
 
-Grouping (outline levels) is modeled by openpyxl through dimensions.group.
+Grouping had no code at all: not a write path, not a read, not the word
+outlineLevel anywhere in the tree. openpyxl models it fully through
+dimensions.group, so this is wiring.
 
-Both write real files and re-open them, because the claim being tested is
-round-trip: a rule or an outline that does not survive the save is not a
+Both write real files and both re-open them, because the claim being tested
+is round-trip: a rule or an outline that does not survive the save is not a
 feature.
 """
 
@@ -113,7 +118,8 @@ def test_time_period_refuses_a_period_excel_does_not_know(tmp_path):
             p, "add", location="A1:A4", cf_type="time_period",
             params={"period": "lastFortnight"})
     msg = str(exc.value)
-    assert "period" in msg and "thisMonth" in msg
+    # Values are snake_case.
+    assert "period" in msg and "this_month" in msg
 
 
 def test_blanks_and_errors_anchor_their_formula_to_the_range(tmp_path):
@@ -133,7 +139,8 @@ def test_the_new_rules_list_and_delete_like_the_old_ones(tmp_path):
         p, "add", location="A1:A4", cf_type="duplicate", params={})
     listed = cf_ops.manage_conditional_format(p, "list")
     assert listed["count"] == 1
-    assert listed["rules"][0]["type"] == "duplicateValues"
+    # List speaks add's vocabulary.
+    assert listed["rules"][0]["cf_type"] == "duplicate"
     cf_ops.manage_conditional_format(p, "delete", location="A1:A4")
     assert cf_ops.manage_conditional_format(p, "list")["count"] == 0
 

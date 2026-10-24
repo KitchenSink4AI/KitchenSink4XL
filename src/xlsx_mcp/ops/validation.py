@@ -1,7 +1,7 @@
 """ops/validation.py: the multiplex read-only checker.
 
-checks=[...] picks the
-batteries, the result is {passed, results: {check: {passed, findings}}},
+Grammar-matched to KitchenSink4Word's validate: checks=[...] picks which
+checks run, the result is {passed, results: {check: {passed, findings}}},
 and passed=false means FINDINGS, never a failed call. Where an underlying
 op already owns the report shape (audit_styles, the hazard scan,
 get_external_links, audit_formulas' sections), the findings are that op's
@@ -19,6 +19,7 @@ Everything here is read-only; repairs live in the editing tools.
 
 from __future__ import annotations
 
+import os
 import zipfile
 from typing import Any, Callable
 
@@ -41,8 +42,8 @@ DEFAULT_CHECKS = ("structure", "references", "calc_staleness")
 
 #: What the structure check can honestly say about ``opens_clean`` when
 #: nothing asked Excel. openpyxl loading a package is NOT Excel accepting it:
-#: some files are read happily by openpyxl while Excel answers "Open method
-#: of Workbooks class failed", and every one of
+#: ten files once existed that openpyxl read happily and Excel
+#: answered "Open method of Workbooks class failed" for, and every one of
 #: them was reported here as ``opens_clean: true`` because the field was
 #: hard-coded. The field now carries this string instead of a claim,
 #: and becomes a real boolean only when the COM check actually ran.
@@ -55,8 +56,9 @@ _COM_ENV = "KS4XL_VALIDATE_COM"
 
 def _com_opens_clean(path: str):
     """Excel's own verdict, or None when it was not asked / not available.
-    com_validate_opens_clean is the authoritative corruption smoke test; this
-    is the wire from the file-tier check to it."""
+    com_validate_opens_clean is the authoritative corruption smoke test and
+    got every one of ten unopenable test files right; this is the
+    wire from the file-tier check to it."""
     import os
 
     if os.environ.get(_COM_ENV, "").strip().lower() not in ("1", "true",
@@ -84,6 +86,14 @@ def _check_structure(path: str) -> tuple[bool, dict]:
             "opens_clean": False,
             "opens_clean_source": "OLE compound-file signature",
             "issues": [_hazard.ole_refusal_text(kind, path)]}
+    if _hazard.is_strict_package(check_path(path, "validate workbook")):
+        # Excel opens a Strict Open XML workbook cleanly; this server does
+        # not read it, and looking inside would report "no visible sheet".
+        return False, {
+            "opens_clean": False,
+            "opens_clean_source": "Strict Open XML (this server does not read it)",
+            "issues": [_hazard.STRICT_REFUSAL.format(
+                name=os.path.basename(path)) + " " + _hazard.STRICT_HINT]}
     try:
         with zipfile.ZipFile(check_path(path, "validate workbook")) as zf:
             names = set(zf.namelist())
@@ -113,6 +123,23 @@ def _check_structure(path: str) -> tuple[bool, dict]:
                     f"sheet names collide case-insensitively: "
                     f"{seen[low]!r} and {name!r}")
             seen[low] = name
+        # What makes Excel refuse a file that openpyxl loads: the same
+        # checks as the gate after every save (stored values against their
+        # cell types, formula lengths, font names, the macro part).
+        from ..core import verify as _verify
+        stored: list[str] = []
+        ok_parts, part_reasons = _verify.structural_check(
+            path, cell_values=stored)
+        if not ok_parts:
+            issues.extend(part_reasons)
+        elif stored:
+            issues.append(
+                "Excel refuses a file whose cells store these: "
+                + "; ".join(stored)
+                + " (write those cells again, or clear them, to repair it)")
+        issues.extend(f"Excel refuses this file: {why}"
+                      for why in _verify.package_refusals(path,
+                                                          macro_part=True))
         excel_verdict = _com_opens_clean(path)
         if excel_verdict is False:
             issues.append(
@@ -147,13 +174,88 @@ def _audit_sections(path: str, wanted: set[str]) -> dict[str, dict]:
                 audit["unknown_sheet_references"]
         out["references"] = findings
     if "calc_staleness" in wanted:
-        findings = dict(audit["missing_cached_values"])
-        if findings["count"]:
-            findings["note"] = (
-                "these formula cells have no cached value and read as "
-                "blank to every non-Excel consumer until a recalculation")
-        out["calc_staleness"] = findings
+        out["calc_staleness"] = _calc_freshness(path, audit)
     return out
+
+
+#: The freshness verdicts calc_staleness can reach, and what each one means.
+FRESH_NO_FORMULAS = "no formulas"
+FRESH_MISSING = "missing results"
+FRESH_PENDING = "recalculation pending"
+FRESH_MANUAL = "manual calculation"
+FRESH_UNVERIFIED = "unverified"
+
+
+def _calc_freshness(path: str, audit: dict) -> dict:
+    """What can honestly be said about the formula results stored in the
+    file. A cached result is whatever the last program to calculate
+    wrote; any tool can change an input afterwards without recalculating
+    (a P&L kept Profit at 300 after Revenue changed, true
+    value 1,800), and nothing in the package records that. So the check
+    names what it CAN know and never reports fresh without proof:
+
+      - results missing outright (the old check, still a failure);
+      - the recalculate-on-open flag, which this product sets whenever its
+        own edit may have left a result out of date (and other tools set it
+        the same way): a recalculation is pending;
+      - manual calculation mode, under which Excel itself leaves results
+        stale until asked;
+      - otherwise UNVERIFIED (passed: null), with the program that last
+        saved the file, and the way to verify: recalculate."""
+    from ..core import pkginfo as _pkginfo
+    from ..core.sandbox import check_path as _check_path
+
+    findings = dict(audit["missing_cached_values"])
+    formulas = int(audit.get("formulas", {}).get("count", 0) or 0)
+    try:
+        state = _pkginfo.calc_state(_check_path(path, "open workbook"))
+    except Exception:  # noqa: BLE001
+        state = {}
+    findings["formula_cells"] = formulas
+    findings.update({k: v for k, v in state.items() if v is not None})
+    verify_hint = ("recalculate (xl_app) has Excel compute every result and "
+                   "save it; after that the cached values are current")
+    if formulas == 0:
+        findings["freshness"] = FRESH_NO_FORMULAS
+        findings["passed_reason"] = "the workbook holds no formulas"
+    elif findings["count"]:
+        findings["freshness"] = FRESH_MISSING
+        findings["note"] = (
+            "these formula cells have no cached value and read as "
+            "blank to every non-Excel consumer until a recalculation")
+        findings["how_to_verify"] = verify_hint
+    elif state.get("recalculates_on_open"):
+        findings["freshness"] = FRESH_PENDING
+        findings["note"] = (
+            "the file is flagged to recalculate when Excel next opens it, "
+            "which a program sets after changing inputs it could not "
+            "recalculate itself; until then some cached results may be out "
+            "of date")
+        findings["how_to_verify"] = verify_hint
+    elif state.get("calc_mode") == "manual":
+        findings["freshness"] = FRESH_MANUAL
+        findings["note"] = (
+            "the workbook uses manual calculation, so Excel itself leaves "
+            "results out of date until someone recalculates")
+        findings["how_to_verify"] = verify_hint
+    else:
+        findings["freshness"] = FRESH_UNVERIFIED
+        findings["note"] = (
+            "every formula has a cached result, but a file cannot prove "
+            "those results are current: any program can change an input "
+            "without recalculating. Treat them as the results of the last "
+            "calculation, not as checked")
+        findings["how_to_verify"] = verify_hint
+    return findings
+
+
+def _freshness_passed(findings: dict) -> bool | None:
+    verdict = findings.get("freshness")
+    if verdict == FRESH_NO_FORMULAS:
+        return True
+    if verdict == FRESH_UNVERIFIED:
+        return None
+    return False
 
 
 def _check_names(path: str) -> tuple[bool, dict]:
@@ -313,6 +415,10 @@ def validate(path: str, checks: list[str] | None = None) -> dict:
             wanted.append(check)
     if not wanted:
         raise XlMcpError("checks must name at least one check")
+    # A part that declares a document type is refused, whichever checks
+    # were asked for (core/xmlsafe.py).
+    from ..core import xmlsafe as _xmlsafe
+    _xmlsafe.check_file(check_path(path, "validate workbook"))
 
     results: dict[str, dict[str, Any]] = {}
     audit_wanted = {c for c in wanted if _CHECKS[c] is None}
@@ -325,16 +431,35 @@ def validate(path: str, checks: list[str] | None = None) -> dict:
             # count covers the error cells. The references check carries a
             # second finding, unknown_sheet_references, and a verdict that
             # ignored it reported passed:true over its own non-empty payload.
-            passed = (findings["count"] == 0
-                      and not findings.get("unknown_sheet_references"))
+            if check == "calc_staleness":
+                passed = _freshness_passed(findings)
+            else:
+                passed = (findings["count"] == 0
+                          and not findings.get("unknown_sheet_references"))
         else:
             passed, findings = runner(path)
         results[check] = {"passed": passed, "findings": findings}
     # "passed", not "ok": the envelope's top-level ok means THE CALL
-    # SUCCEEDED; a battery that ran fine but found problems is a passed=false
+    # SUCCEEDED; a run that went fine but found problems is a passed=false
     # result, not an error.
-    return {"passed": all(r["passed"] for r in results.values()),
-            "checks_run": wanted, "results": results}
+    #
+    # A check that cannot reach a verdict (calc_staleness without proof that
+    # the results are current) reports passed: null, and so does the whole
+    # report unless another check failed outright: unverified is not
+    # passed.
+    verdicts = [r["passed"] for r in results.values()]
+    if any(v is False for v in verdicts):
+        overall: bool | None = False
+    elif any(v is None for v in verdicts):
+        overall = None
+    else:
+        overall = True
+    out: dict[str, Any] = {"passed": overall, "checks_run": wanted,
+                           "results": results}
+    unverified = [c for c, r in results.items() if r["passed"] is None]
+    if unverified:
+        out["unverified"] = unverified
+    return out
 
 
 __all__ = ["validate", "CHECK_NAMES", "DEFAULT_CHECKS"]

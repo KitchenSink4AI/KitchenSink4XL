@@ -1,7 +1,7 @@
 """An import nothing uses is a claim nothing backs.
 
-CI runs pytest and nothing else, so nothing else would catch one. The
-obvious fix is a linter, which means a new dependency, a
+Six of them had accumulated in src/ by September 2026 and CI could not have
+caught any: the workflow runs pytest and nothing else. The obvious fix is a linter, which means a new dependency, a
 network install, and a second gate to keep green. This is the same catch in
 forty lines of the standard library, inside the suite that already runs.
 
@@ -93,8 +93,8 @@ def test_module_has_no_unused_imports(path: Path):
 
 
 def test_the_check_can_actually_see_a_dead_import(tmp_path):
-    """Red-first, permanently: the detector is itself pinned, so it cannot
-    quietly degrade into a test that passes because it stopped looking."""
+    """The detector is itself pinned, so it cannot quietly degrade into a
+    test that passes because it stopped looking."""
     live = tmp_path / "live.py"
     live.write_text("import os\n\nprint(os.sep)\n", encoding="utf-8")
     dead = tmp_path / "dead.py"

@@ -1,0 +1,12 @@
+{
+  "key_id": "fixture-key",
+  "payload": {
+    "schema": 1,
+    "product": "kitchensink4xl-business",
+    "license_id": "FIXTURE-0003",
+    "licensee": "\u00c9ditions Fixture S.A.",
+    "issued_on": "2026-01-15",
+    "updates_through": "2027-01-15"
+  },
+  "signature": "GRkmImKv7D1D3ittMyd0Ws1T9jsRQE0wrssSnllplt1DHG83wRo2AH8LPBULp1MPJU1FPcfwo6kS5l24MMqcBw=="
+}

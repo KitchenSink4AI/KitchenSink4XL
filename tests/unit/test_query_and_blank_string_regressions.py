@@ -1,15 +1,18 @@
-"""Regressions for query_range ordering/grouping and blank-string writes.
+"""Regressions for defects found in field testing.
 
-  * empty-string writes: "" tripped verify-after-write and no write tool
-    could store a blank string.
+Each test uses the EXACT reproduction from the field test, so a re-run of that
+test would pass. Defects fixed:
+
+  * empty-string writes: "" tripped verify-after-write and no write
+    tool could store a blank string.
   * query_range order_by direction: a {"order": "desc"} spec sorted
-    ascending silently; only the "dir" key was honored, none was documented,
+    ascending SILENTLY; only the "dir" key was honored, none was documented,
     and an unknown direction word defaulted quietly to ascending.
-  * query_range group_by JSON-string form: a client delivering the untyped
-    group_by as '["Region"]' or '"Region"' hit `no column '["Region"]'`.
+  * query_range group_by JSON-string form: a client delivering the
+    untyped group_by as '["Region"]' or '"Region"' hit `no column '["Region"]'`.
 
-The COM-tier sparkline binding regression lives in test_comtier.py (needs
-Excel).
+The COM-tier sparkline mis-binding regression lives in test_comtier.py (needs
+Excel) since it is a live-COM defect.
 """
 
 from __future__ import annotations

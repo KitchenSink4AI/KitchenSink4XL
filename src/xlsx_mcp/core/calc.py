@@ -1,6 +1,6 @@
-"""core/calc.py: the formula / calc layer.
+"""core/calc.py: the formula / calc layer (the honest calc story).
 
-The load-bearing fact (library_gap_analysis fact 2): openpyxl writes formula
+The load-bearing fact: openpyxl writes formula
 strings and computes NOTHING. A file it saves after a formula edit has no
 cached value for those cells, so every non-Excel consumer reads them empty
 until Excel opens and recalculates. This module owns:
@@ -10,13 +10,10 @@ until Excel opens and recalculates. This module owns:
   - cached-value labeling (cached | calculated | formula | absent) so no read
     ever silently returns an empty cell where a formula lives,
   - fullCalcOnLoad injection (the no-Excel flag that forces recalc on open),
-  - the COM recalc round-trip,
-  - the `formulas`-library pure-Python fallback with a coverage report.
+  - the COM recalc round-trip (the fidelity path).
 
-No pure-Python engine computes at Excel fidelity; COM is the fidelity path and
-`formulas` is a best-effort convenience with a stated coverage disclaimer.
-pywin32 and `formulas` are imported lazily so this module imports on any
-platform.
+No pure-Python engine computes at Excel fidelity; COM is the fidelity path.
+pywin32 is imported lazily so this module imports on any platform.
 """
 
 from __future__ import annotations
@@ -24,18 +21,19 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from . import partnames as _partnames
 from .errors import FormulaRejected
 
 # ---------------------------------------------------------- the _xlfn shim
 
 # Functions Excel stores with a _xlfn. prefix (post-2007 "future functions").
 # Writing the bare name via openpyxl lands #NAME? in Excel (or, for dynamic
-# arrays, a repair-only file: a bare FILTER). The list covers the full
-# documented future-function set (the 2010 statistical dot-family, the 2013
-# math/engineering additions, 2016 IFS/TEXTJOIN, and the 365 dynamic-array
-# and lambda-helper era), because a missing entry means a silently broken
-# formula write. Sources: the MS-XLSX future-function storage rules and
-# Microsoft's _xlfn documentation; XLOOKUP was verified end to end in Excel.
+# arrays, a repair-only file: bare FILTER). The list is the full documented
+# future-function set (the 2010 statistical dot-family, the 2013 math/engineering
+# wave, 2016 IFS/TEXTJOIN, and the 365 dynamic-array and lambda-helper era),
+# because a missing entry means a silently broken formula write. Sources: the
+# MS-XLSX future-function storage rules and Microsoft's _xlfn documentation;
+# XLOOKUP was verified end to end in Excel.
 XLFN_FUNCS = frozenset({
     # 2010: statistical renames and friends
     "AGGREGATE", "BETA.DIST", "BETA.INV", "BINOM.DIST", "BINOM.INV",
@@ -51,7 +49,7 @@ XLFN_FUNCS = frozenset({
     "QUARTILE.EXC", "QUARTILE.INC", "RANK.AVG", "RANK.EQ", "STDEV.P",
     "STDEV.S", "T.DIST", "T.DIST.2T", "T.DIST.RT", "T.INV", "T.INV.2T",
     "T.TEST", "VAR.P", "VAR.S", "WEIBULL.DIST", "WORKDAY.INTL", "Z.TEST",
-    # 2013: math / engineering / info
+    # 2013: math / engineering / info wave
     "ACOT", "ACOTH", "ARABIC", "BASE", "BINOM.DIST.RANGE", "BITAND",
     "BITLSHIFT", "BITOR", "BITRSHIFT", "BITXOR", "CEILING.MATH", "COMBINA",
     "COT", "COTH", "CSC", "CSCH", "DAYS", "DECIMAL", "ENCODEURL",
@@ -78,8 +76,10 @@ XLFN_FUNCS = frozenset({
 # Functions stored with the _xlfn._xlws. worksheet-scope prefix. Documented
 # storage uses this ONLY for FILTER and SORT; _xlfn._xlws.FILTER was verified
 # end to end in Excel. SORTBY / UNIQUE / SEQUENCE / RANDARRAY / ANCHORARRAY /
-# SINGLE do not belong here: a mis-prefixed dynamic array risks a
-# repair-only file. They are plain _xlfn. names (see XLFN_FUNCS above).
+# SINGLE do not belong here: a wrong prefix risks the repair-only failure that
+# a mis-prefixed dynamic array causes. They are plain _xlfn. names (see
+# XLFN_FUNCS above).
+# COM-tier task: verify each 365-era prefix empirically in Excel.
 XLFN_XLWS_FUNCS = frozenset({"FILTER", "SORT"})
 
 _CALL = re.compile(r"(?<![A-Za-z0-9_.])([A-Za-z][A-Za-z0-9_.]*)\s*\(")
@@ -107,9 +107,8 @@ _NAME_TOKEN = re.compile(r"^[A-Za-z_\\][A-Za-z0-9_.?\\]*$")
 _OPT_TOKEN = re.compile(r"^\[\s*([A-Za-z_\\][A-Za-z0-9_.?\\]*)\s*\]$")
 
 #: The optional-parameter prefix Excel writes at a LAMBDA DECLARATION site.
-#: Use sites in the body still take _xlpm. (verified against Excel: Excel
-#: authored =LAMBDA(x,[y],IF(ISOMITTED(y),x,x+y))
-#: and stored
+#: Use sites in the body still take _xlpm. (COM ground truth: Excel authored
+#: =LAMBDA(x,[y],IF(ISOMITTED(y),x,x+y)) and stored
 #:   _xlfn.LAMBDA(_xlpm.x,_xlop.y,IF(_xlfn.ISOMITTED(_xlpm.y),
 #:                                   _xlpm.x,_xlpm.x+_xlpm.y))
 #: -- brackets gone, _xlop. at the declaration, _xlpm. everywhere else,
@@ -120,8 +119,8 @@ _OPT_PREFIX = "_xlop."
 
 #: Every name a call site could mean instead of a declared parameter. Excel's
 #: rule at a call site is BUILTIN WINS: =LET(mod,2,mod+MOD(7,3)) is stored
-#: _xlfn.LET(_xlpm.mod,2,_xlpm.mod+MOD(7,3)) and evaluates 3 (verified
-#: against Excel). Enforcing that rule needs the WHOLE builtin
+#: _xlfn.LET(_xlpm.mod,2,_xlpm.mod+MOD(7,3)) and evaluates 3 (COM ground
+#: truth). Enforcing that rule needs the WHOLE builtin
 #: catalog, not a sample: the hand-written 30-name list below left MOD, TRIM,
 #: TODAY, COUNTIF, SUMIF, CONCATENATE, ROUNDUP and several hundred others
 #: outside the guard, so any of them could be captured into _xlpm.MOD(7,3).
@@ -155,7 +154,8 @@ _BUILTIN_FUNCS = _CLASSIC_FUNCS | XLFN_FUNCS | XLFN_XLWS_FUNCS
 
 #: A single-quoted sheet-name span ('Sales x'!A1), with '' as the escape.
 #: Excel never writes a parameter prefix inside one: =LET(x,1,x+'Sales x'!A1)
-#: is stored with 'Sales x'!A1 untouched (verified against Excel). The "!" lookahead does not cover this, because the occurrence
+#: is stored with 'Sales x'!A1 untouched (COM ground truth). The "!"
+#: lookahead does not cover this, because the occurrence
 #: inside the quotes is followed by an apostrophe, not a "!".
 _SHEET_QUOTE_RE = re.compile(r"'(?:[^']|'')*'")
 
@@ -168,14 +168,14 @@ def literal_spans(body: str) -> list[tuple[int, int, str]]:
 
     ONE scan handling BOTH quote characters is the load-bearing part. Scanning
     for double quotes alone (what this module did before) misreads two legal
-    shapes, both of which produce a workbook Excel REFUSES TO OPEN:
+    shapes, and both produce a workbook that Excel REFUSES TO OPEN:
 
       - a '"' inside a single-quoted sheet name starts a phantom string that
         swallows the rest of the argument list, hiding later declarations, so
         =LET(x,'a"b'!A1,y,"c",x&y) lost its `y` and wrote it bare. Excel's own
         storage for that formula is
         _xlfn.LET(_xlpm.x,'a"b'!A1,_xlpm.y,"c",_xlpm.x&_xlpm.y)
-: the double quote inside
+        (COM ground truth): the double quote inside
         the sheet name is ordinary text, not a string delimiter.
       - an unbalanced '(' inside a single-quoted sheet name (legal: Excel bans
         only : \\ / ? * [ ]) threw the paren depth counter off, so the whole
@@ -205,20 +205,48 @@ def literal_spans(body: str) -> list[tuple[int, int, str]]:
     return spans
 
 
+def _inert_spans(body: str) -> list[tuple[int, int, str]]:
+    """literal_spans read the way core.refs reads a formula: string literals,
+    quoted sheet names, AND the brackets of structured references
+    (Orders[Unit price ($)], Orders[[#This Row],[Qty]]) and of other
+    workbooks' prefixes ([1]), in one left-to-right scan that honours the
+    brackets' nesting and ' escapes. Inside a structured reference every
+    character is part of a column name: a comma there is not an argument
+    separator, a parenthesis not a call, a quote not a string, and a name
+    there is a column, never a LET or LAMBDA parameter."""
+    from . import refs as _refs
+    return _refs._lex(body)
+
+
+#: Characters that change how a formula's argument lists are read, blanked
+#: inside a structured reference's brackets (the rest of the bracket, the
+#: column name itself, stays readable for the LAMBDA [optional] check).
+_ARG_SYNTAX = frozenset(',()"\'{};')
+
+
 def _blank_literals(body: str) -> str:
     """The formula with every inert span (string literal AND single-quoted
     sheet name) replaced by same-length filler, so a structural scan can use
-    the offsets of the original text."""
+    the offsets of the original text. Inside brackets only the characters
+    that change how arguments are read are blanked, so the comma in
+    LET(x,Orders[[#This Row],[Qty]],y,2,x+y) never splits an argument, while
+    a LAMBDA's optional parameter [y] stays readable."""
+    from . import refs as _refs
     out = list(body)
-    for start, end, _kind in literal_spans(body):
+    for start, end, kind in _inert_spans(body):
+        if kind in (_refs._BRK, _refs._EXT):
+            for i in range(start + 1, end - 1):
+                if out[i] in _ARG_SYNTAX:
+                    out[i] = " "
+            continue
         for i in range(start, end):
             out[i] = " "
     return "".join(out)
 
 
 #: An identifier immediately followed by whitespace and then '(' -- a shape
-#: Excel's formula bar tolerates on INPUT but its FILE PARSER refuses.
-#: Verified against Excel: a worksheet part carrying
+#: Excel's formula bar tolerates on INPUT but its FILE PARSER refuses. COM
+#: ground truth: a worksheet part carrying
 #: <f>SUM (1,2)</f> gives "Open method of Workbooks class failed", and so does
 #: the tab and newline form; Excel's own Formula2 setter rejects the same
 #: string with 0x800A03EC. Nothing Excel authors ever contains it, so a
@@ -227,8 +255,22 @@ _SPACE_BEFORE_PAREN = re.compile(r"(?<![A-Za-z0-9_.])([A-Za-z_\\]"
                                  r"[A-Za-z0-9_.?\\]*)[ \t\r\n]+\(")
 
 
+def _blank_inert(body: str) -> str:
+    """The formula with every span no function call can stand in blanked to
+    same-length filler: string literals, quoted sheet names, AND the
+    brackets of structured references (Orders[Unit price ($)],
+    Orders[[#This Row],[Qty]]) and other workbooks' prefixes (_inert_spans).
+    A table column named "Unit price ($)" is text, not a call to a function
+    named price."""
+    out = list(body)
+    for start, end, _kind in _inert_spans(body):
+        for i in range(start, end):
+            out[i] = " "
+    return "".join(out)
+
+
 def _refuse_space_before_paren(body: str) -> None:
-    blanked = _blank_literals(body)
+    blanked = _blank_inert(body)
     m = _SPACE_BEFORE_PAREN.search(blanked)
     if m is None:
         return
@@ -284,7 +326,7 @@ def _declarations(body: str) -> tuple[list[Declaration], list[tuple[int, int, st
     SCOPE IS REAL, and the previous global substitution got it wrong. The old
     comment here claimed "Excel prefixes every occurrence of a declared name
     regardless of scope"; Excel disagrees for occurrences OUTSIDE the
-    declaring call. verified against Excel, authored by
+    declaring call. COM ground truth, authored by
     Excel with workbook-scoped defined names Rate / Factor / a present:
 
         =LET(Rate,1,Rate)+Rate
@@ -391,13 +433,13 @@ def _prefix_params_scoped(body: str, decls: list[Declaration]) -> str:
          A NON-builtin name followed by '(' is a lambda call site and DOES get
          the prefix (_xlpm.f(_xlpm.x)).
       3. SCOPE: a name is prefixed only within the span of the LET/LAMBDA that
-         declared it.
+         declared it (see _declarations for the COM ground truth).
 
     Maximal-munch tokenizing also retires the old sorted-by-length regex
     loop, which needed lookarounds to keep 'sum' out of 'summary'."""
     if not decls:
         return body
-    inert = literal_spans(body)
+    inert = _inert_spans(body)
     pieces: list[str] = []
     pos = 0
     for m in _IDENT.finditer(body):
@@ -430,11 +472,11 @@ def _prefix_params_scoped(body: str, decls: list[Declaration]) -> str:
 def _bare_declared_names(body: str, decls: list[Declaration]) -> list[str]:
     """Declared names still sitting bare in a NORMALIZED formula.
 
-    The post-pass assertion: correct prefixing or a
+    The post-pass assertion behind the promise: correct prefixing or a
     loud refusal, never a bare LET/LAMBDA name reaching the file. Uses the
     same three rules as the prefix pass, so a name legitimately left bare (a
     builtin call site) is not reported."""
-    inert = literal_spans(body)
+    inert = _inert_spans(body)
     bare: list[str] = []
     for m in _IDENT.finditer(body):
         start, end = m.start(), m.end()
@@ -459,13 +501,14 @@ def _bare_declared_names(body: str, decls: list[Declaration]) -> list[str]:
 def _outside_strings(body: str, fn) -> str:
     """Apply fn to every stretch of the formula that is not an inert span.
 
-    Inert means BOTH kinds: a double-quoted string literal and a
-    single-quoted sheet name. Excel prefixes nothing inside either, and
-    treating only the double-quoted kind as inert is how a sheet named
-    'a"b' used to desynchronize the whole pass."""
+    Inert means every kind _inert_spans reads: a double-quoted string
+    literal, a single-quoted sheet name and a structured reference's
+    brackets. Excel prefixes nothing inside any of them, and treating only
+    the double-quoted kind as inert is how a sheet named 'a"b' used to
+    desynchronize the whole pass."""
     pieces: list[str] = []
     pos = 0
-    for start, end, _kind in literal_spans(body):
+    for start, end, _kind in _inert_spans(body):
         if start > pos:
             pieces.append(fn(body[pos:start]))
         pieces.append(body[start:end])   # inert span, verbatim
@@ -488,7 +531,8 @@ def normalize_formula(formula: str) -> tuple[str, list[str]]:
     list, or (as a backstop) a declared name that could not be prefixed.
 
     NORMALIZATION IS NOT VERBATIM ROUND-TRIPPING, by design. Two cosmetic
-    differences are expected and are not drift to be fixed: an optional declaration written =LAMBDA(x, [ y ], x+y) comes back
+    differences are expected and are not drift to be fixed: an optional
+    declaration written =LAMBDA(x, [ y ], x+y) comes back
     as [y], because Excel stores the name without the brackets or the spaces
     and the brackets are re-derived on read; and a caller who supplies an
     ALREADY-prefixed formula, =LET(_xlpm.x,1,_xlpm.x+1), denormalizes to
@@ -565,8 +609,8 @@ def denormalize_formula(formula: str) -> str:
 
     LITERAL-AWARE, like normalize_formula's own passes. Three blind
     str.replace calls over the WHOLE formula edited the user's data: Excel
-    stores =CONCATENATE("_xlpm.","total") verbatim (verified against Excel:
-    the cell displays "_xlpm.total"), and reading it
+    stores =CONCATENATE("_xlpm.","total") verbatim (COM ground truth: the
+    cell displays "_xlpm.total"), and reading it
     back returned =CONCATENATE("","total"). A read followed by a write then
     made that corruption permanent. Prefixes inside a string literal or a
     quoted sheet name are the user's TEXT, never storage syntax, so this
@@ -671,7 +715,6 @@ def inject_full_calc_on_load(path: str) -> bool:
     Raw-zip surgery (no openpyxl model load); returns True if it changed the
     flag. The no-Excel answer to the stale-cache problem."""
     import shutil
-    import tempfile
     import zipfile
     from pathlib import Path
 
@@ -686,7 +729,10 @@ def inject_full_calc_on_load(path: str) -> bool:
     if not changed:
         return False
 
-    fd, tmp = tempfile.mkstemp(suffix=".xlsx", dir=str(src.parent))
+    from . import deadline as _deadline
+    _deadline.commit_or_raise("the calculation flag")  # rewrites the file in place
+    from .safesave import scratch_file
+    fd, tmp = scratch_file(src.parent, ".xlsx")
     import os
     os.close(fd)
     with zipfile.ZipFile(src) as zin, \
@@ -720,7 +766,6 @@ def strip_empty_cached_values(path: str) -> int:
     and never a formula whose real cached result was the empty string."""
     import os
     import shutil
-    import tempfile
     import zipfile
     from pathlib import Path
 
@@ -743,7 +788,8 @@ def strip_empty_cached_values(path: str) -> int:
     if not targets:
         return 0
 
-    fd, tmp = tempfile.mkstemp(suffix=src.suffix, dir=str(src.parent))
+    from .safesave import scratch_file
+    fd, tmp = scratch_file(src.parent, src.suffix)
     os.close(fd)
     with zipfile.ZipFile(src) as zin, \
             zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
@@ -760,12 +806,12 @@ def strip_empty_cached_values(path: str) -> int:
 # ------------------------------------ the always-calculate cache (ca="1")
 
 #: A cell as Excel stores it, with its optional attributes and its optional
-#: body. SELF-CLOSING CELLS ARE LOAD-BEARING: Excel
-#: writes a styled EMPTY cell as <c r="A66" s="1"/>, and the previous pattern
+#: body. SELF-CLOSING CELLS ARE LOAD-BEARING: Excel writes a styled EMPTY
+#: cell as <c r="A66" s="1"/>, and the previous pattern
 #: (cattrs [^>]*, then '>', then a lazy body scan for '</c>') swallowed the
 #: '/' into cattrs, matched the '>', and sent the lazy body hunting for a
 #: closer that never comes -- to end-of-part, failing, and retrying at the
-#: next of 479,492 such cells in a real accounting-export shape: O(cells x
+#: next of 479,492 such cells in a real QuickBooks-export shape: O(cells x
 #: filesize), >28 CPU-minutes on a single set_cell save. The pattern now
 #: keeps '/' out of the unquoted attribute run (a '/' in an attribute VALUE
 #: is inside quotes and matched by the quoted alternative) so a self-closing
@@ -816,7 +862,7 @@ def _resolve_part(target: str) -> str:
     spellings depending on who wrote the file: absolute ("/xl/worksheets/
     sheet1.xml"), relative to xl/ ("worksheets/sheet1.xml"), and occasionally
     already prefixed."""
-    part = target.replace("\\", "/").replace("/./", "/")
+    part = _partnames.normalize(target.replace("\\", "/").replace("/./", "/"))
     if part.startswith("/"):
         return part.lstrip("/")
     if part.startswith("xl/"):
@@ -824,9 +870,12 @@ def _resolve_part(target: str) -> str:
     return "xl/" + part
 
 
-def _always_calc_cells(zf, part: str) -> dict[str, tuple[str, str]]:
-    """addr -> (formula_text, cached_value_element) for the ca="1" formula
-    cells of one worksheet part."""
+def _always_calc_cells(zf, part: str) -> dict[str, tuple[str, str, str | None]]:
+    """addr -> (formula_text, cached_value_element, cell type) for the ca="1"
+    formula cells of one worksheet part. The cell type (the t= attribute:
+    "str", "e", "b", or None for a number) belongs to the cached value and
+    must travel with it: a text result put back into a cell with no t="str"
+    is a number cell holding text, a file Excel cannot open at all."""
     try:
         raw = zf.read(part)
     except KeyError:
@@ -838,11 +887,11 @@ def _always_calc_cells(zf, part: str) -> dict[str, tuple[str, str]]:
     # Cheap prefilter: a part with no ca="1" anywhere
     # has nothing to restore, so the cell walk is skipped entirely. This is
     # the common case -- most workbooks never use always-calculate -- and it
-    # is what keeps a plain set_cell save flat on the accounting-export shape
+    # is what keeps a plain set_cell save flat on the QuickBooks-export shape
     # (hundreds of thousands of trailing styled empty cells, zero ca cells).
     if 'ca="1"' not in xml:
         return {}
-    out: dict[str, tuple[str, str]] = {}
+    out: dict[str, tuple[str, str, str | None]] = {}
     for m in _CELL_RE.finditer(xml):
         body = m.group("body")
         if body is None:
@@ -851,11 +900,15 @@ def _always_calc_cells(zf, part: str) -> dict[str, tuple[str, str]]:
         if fm is None or 'ca="1"' not in fm.group("fattrs"):
             continue
         vm = _V_RE.search(body[fm.end():])
-        out[m.group(1)] = (fm.group("text"), vm.group(0) if vm else "")
+        tm = _T_ATTR_RE.search(m.group("cattrs"))
+        ctype = tm.group(1) if tm is not None and tm.group(1) != "n" else None
+        out[m.group(1)] = (fm.group("text"), vm.group(0) if vm else "", ctype)
     return out
 
 
-def restore_always_calc_cache(original: str, produced: str) -> int:
+def restore_always_calc_cache(original: str, produced: str, *,
+                              titles: dict[str, str] | None = None,
+                              same=None) -> int:
     """Put back the ca="1" flag and the cached value on formula cells the
     edit did not touch. Returns the number of cells restored.
 
@@ -876,10 +929,22 @@ def restore_always_calc_cache(original: str, produced: str) -> int:
     Conservative by construction: a cell is restored only when the produced
     package still holds the SAME formula text at the SAME address on the same
     sheet, so an edited formula never gets a stale value pinned to it, and a
-    cell the edit removed is simply not restored."""
+    cell the edit removed is simply not restored.
+
+    The value goes back WITH ITS CELL TYPE. openpyxl writes a formula cell
+    with no t= attribute, so a restored text result (t="str"), error
+    (t="e") or boolean (t="b") must take its type back too: <v>label</v> in
+    a cell with no t="str" is a number cell holding text, and Excel cannot
+    open that file at all (measured: "Open method of Workbooks class
+    failed" in normal, repair and extract-data modes), while a TRUE result
+    without t="b" reads as the number 1.
+
+    titles maps a sheet's original title to its title in the produced
+    package (a rename); same(loaded, now) says whether formula text `now`
+    is the formula `loaded` after a rewrite that changes no result (a
+    rename), so a renamed formula keeps its cached value too."""
     import os
     import shutil
-    import tempfile
     import zipfile
     from pathlib import Path
 
@@ -892,7 +957,7 @@ def restore_always_calc_cache(original: str, produced: str) -> int:
             if not src_parts or not out_parts:
                 return 0
             for title, part in src_parts.items():
-                target = out_parts.get(title)
+                target = out_parts.get((titles or {}).get(title, title))
                 if target is None:
                     continue
                 wanted = _always_calc_cells(zin, part)
@@ -904,7 +969,7 @@ def restore_always_calc_cache(original: str, produced: str) -> int:
                     xml = raw.decode(enc)
                 except UnicodeDecodeError:
                     continue
-                new_xml, n = _reapply_always_calc(xml, wanted)
+                new_xml, n = _reapply_always_calc(xml, wanted, same)
                 if n:
                     patches[target] = new_xml
     except Exception:  # noqa: BLE001 - never fail a save over a cache repair
@@ -913,7 +978,8 @@ def restore_always_calc_cache(original: str, produced: str) -> int:
         return 0
 
     restored = 0
-    fd, tmp = tempfile.mkstemp(suffix=src.suffix, dir=str(src.parent))
+    from .safesave import scratch_file
+    fd, tmp = scratch_file(src.parent, src.suffix)
     os.close(fd)
     try:
         with zipfile.ZipFile(src) as zin, \
@@ -935,8 +1001,30 @@ def restore_always_calc_cache(original: str, produced: str) -> int:
     return restored
 
 
-def _reapply_always_calc(xml: str, wanted: dict[str, tuple[str, str]]
-                         ) -> tuple[str, int]:
+def _with_cell_type(cattrs: str, ctype: str | None) -> str:
+    """A cell's attribute run with its t= set to ctype (None: no t=, which
+    is a number)."""
+    cattrs = re.sub(r'\s+t="[^"]*"', "", cattrs)
+    return cattrs + (f' t="{ctype}"' if ctype else "")
+
+
+def _same_text(loaded: str, now: str, same) -> bool:
+    """Formula text equality, or (with same) equality after a rename's
+    rewrite. Both arrive XML-escaped from the parts."""
+    if loaded == now:
+        return True
+    if same is None:
+        return False
+    import html as _html
+    try:
+        return bool(same(_html.unescape(loaded), _html.unescape(now)))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _reapply_always_calc(xml: str,
+                         wanted: dict[str, tuple[str, str, str | None]],
+                         same=None) -> tuple[str, int]:
     n = 0
 
     def fix(m: re.Match) -> str:
@@ -944,23 +1032,26 @@ def _reapply_always_calc(xml: str, wanted: dict[str, tuple[str, str]]
         entry = wanted.get(addr)
         if entry is None:
             return m.group(0)
-        text, cached = entry
+        text, cached, ctype = entry
         body = m.group("body")
         if body is None:
             return m.group(0)  # self-closing: no formula to re-flag
         fm = _F_RE.search(body)
-        if fm is None or fm.group("text") != text:
+        if fm is None or not _same_text(text, fm.group("text"), same):
             return m.group(0)          # the edit changed this formula
         attrs = fm.group("fattrs")
         if 'ca="1"' not in attrs:
             attrs = attrs + ' ca="1"'
-        rebuilt = f"<f{attrs}>{text}</f>"
+        rebuilt = f"<f{attrs}>{fm.group('text')}</f>"
         tail = body[fm.end():]
+        cattrs = m.group("cattrs")
         if cached and not _V_RE.search(tail):
             tail = cached + tail
+            # the cached value's type comes back with it
+            cattrs = _with_cell_type(cattrs, ctype)
         nonlocal n
         n += 1
-        return (f'<c r="{addr}"{m.group("cattrs")}>'
+        return (f'<c r="{addr}"{cattrs}>'
                 f"{body[:fm.start()]}{rebuilt}{tail}</c>")
 
     return _CELL_RE.sub(fix, xml), n
@@ -1041,11 +1132,12 @@ def _at_risk_number_texts(zf, part: str) -> dict[str, tuple[str, float, float]]:
 
 def preserve_untouched_number_text(
         original: str, produced: str, *,
-        remap, skip) -> int:
+        remap, skip, titles: dict[str, str] | None = None) -> int:
     """Put back the ORIGINAL stored text of full-precision numeric cells the
     edit did not touch. Returns the number of cells restored.
 
-    WHY THIS EXISTS: this was the one silent wrong-number channel. openpyxl serializes floats with %.16g, and a
+    WHY THIS EXISTS (the one silent wrong-number channel). openpyxl
+    serializes floats with %.16g, and a
     double that needs 17 significant digits to round-trip (Excel writes
     these routinely: 0.1+0.2 is stored as 0.30000000000000004) is silently
     rewritten 1 ulp off in every cell of every sheet on ANY save -- cells the
@@ -1071,7 +1163,6 @@ def preserve_untouched_number_text(
     A repair failure of any kind returns 0 and never fails the save."""
     import os
     import shutil
-    import tempfile
     import zipfile
     from pathlib import Path
 
@@ -1084,7 +1175,7 @@ def preserve_untouched_number_text(
             if not src_parts or not out_parts:
                 return 0
             for title, part in src_parts.items():
-                target = out_parts.get(title)
+                target = out_parts.get((titles or {}).get(title, title))
                 if target is None:
                     continue
                 at_risk = _at_risk_number_texts(zin, part)
@@ -1113,7 +1204,8 @@ def preserve_untouched_number_text(
         return 0
 
     restored = 0
-    fd, tmp = tempfile.mkstemp(suffix=src.suffix, dir=str(src.parent))
+    from .safesave import scratch_file
+    fd, tmp = scratch_file(src.parent, src.suffix)
     os.close(fd)
     try:
         with zipfile.ZipFile(src) as zin, \
@@ -1197,10 +1289,10 @@ def _set_full_calc(workbook_xml: str) -> tuple[str, bool]:
 
 @dataclass
 class RecalcResult:
-    engine: str                       # "com" | "formulas" | "flag"
+    engine: str                       # "com" | "flag"
     ok: bool
     values: dict = field(default_factory=dict)   # addr -> value (COM readback)
-    unsupported: list[str] = field(default_factory=list)  # formulas coverage
+    unsupported: list[str] = field(default_factory=list)
     note: str = ""
 
 
@@ -1210,8 +1302,17 @@ def recalc_via_com(path: str, manager, *, calculate: bool = True,
     calculation even under manual mode, save so the cache is populated, close.
     `manager` is an ExcelInstanceManager. Returns the readback of any formula
     cells it can see on the active sheet is left to the caller; this just
-    guarantees the file's cache is populated on disk."""
+    guarantees the file's cache is populated on disk.
+
+    The open, the save and the promote hold the workbook's write lock
+    on the CALLING thread, as every COM save does (ops/comtier.py), and
+    Excel's copy goes in place only while the workbook is still the file
+    Excel opened. Call it on a thread of your own with your own manager (as
+    scripts/calc_spike.py does), never inside a run_com job: the COM worker
+    thread refuses the lock, and this then answers ok=False."""
     import os
+
+    from . import safesave as _safesave
     w = manager.acquire()
     wb = None
     try:
@@ -1221,16 +1322,37 @@ def recalc_via_com(path: str, manager, *, calculate: bool = True,
             prior_calc = app.Calculation
         except Exception:
             prior_calc = None
-        wb = app.Workbooks.Open(os.path.abspath(path))
-        if calculate:
-            # Explicit calc fires even in manual mode (the exp-5 caveat cover).
-            if full:
-                app.CalculateFull()
-            else:
-                app.Calculate()
-        wb.Save()
-        wb.Close(SaveChanges=False)
-        wb = None
+        # The one shared open, which refuses a workbook with a
+        # password to modify instead of letting Excel ask in a dialog.
+        from ..com import session as _session
+        target = os.path.abspath(path)
+        with _safesave.write_lock(target):
+            copy = _session.copy_path_for(target)  # beside it
+            stamp = _safesave.file_stamp(target)
+            wb = _session.open_workbook(app, target)
+            if _safesave.file_stamp(target) != stamp:
+                raise _safesave.changed_on_disk_error(target)
+            if calculate:
+                # Explicit calc fires even in manual mode (the exp-5 caveat
+                # cover).
+                if full:
+                    app.CalculateFull()
+                else:
+                    app.Calculate()
+            from . import deadline as _deadline
+            _deadline.commit_or_raise("the recalculation")  # Before Excel saves
+            # Excel writes a copy, which replaces the file only
+            # after Excel has closed it.
+            staged = _session.save_workbook(wb, label="save after recalculation",
+                                            path=target, copy=copy)
+            try:
+                wb.Close(SaveChanges=False)
+                wb = None
+            except BaseException:
+                _session.discard_saved(staged)
+                raise
+            _session.put_in_place(staged, target, stamp=stamp,
+                                  check=_session.check_saved_copy(target))
         if prior_calc is not None:
             try:
                 app.Calculation = prior_calc
@@ -1249,51 +1371,12 @@ def recalc_via_com(path: str, manager, *, calculate: bool = True,
         manager.release_to_pool(w)
 
 
-# ------------------------------------------------- formulas-lib fallback
-
-def recalc_via_formulas(path: str, out_path: str) -> RecalcResult:
-    """Pure-Python best-effort recalc via the `formulas` library. Computes the
-    dependency graph without Excel and writes cached values back. Reports any
-    functions outside its coverage. Import is lazy so `formulas` stays an
-    optional extra; a clean ImportError becomes an honest not-available note."""
-    try:
-        import formulas  # type: ignore
-    except Exception as exc:  # noqa: BLE001
-        return RecalcResult(engine="formulas", ok=False,
-                            note=f"formulas unavailable: {exc}")
-    try:
-        xl_model = formulas.ExcelModel().loads(path).finish()
-        solution = xl_model.calculate()
-        # Write results back next to out_path (the formulas lib names its own
-        # output files inside dirpath; the caller reads them from there).
-        xl_model.write(dirpath=_dir_of(out_path))
-        return RecalcResult(engine="formulas", ok=True,
-                            values={k: _clean(v) for k, v in
-                                    list(solution.items())[:50]},
-                            note="best-effort pure-Python recalc")
-    except Exception as exc:  # noqa: BLE001
-        return RecalcResult(engine="formulas", ok=False,
-                            note=f"{type(exc).__name__}: {exc}")
-
-
-def _dir_of(p: str) -> str:
-    import os
-    return os.path.dirname(os.path.abspath(p)) or "."
-
-
-def _clean(v):
-    try:
-        return v.value[0, 0] if hasattr(v, "value") else v
-    except Exception:
-        return str(v)
-
-
 __all__ = [
     "normalize_formula", "denormalize_formula", "label_cell",
     "is_formula_cell", "formula_text_of", "looks_like_formula_text",
     "inject_full_calc_on_load", "strip_empty_cached_values",
     "preserve_untouched_number_text", "full_precision_loss",
-    "recalc_via_com", "recalc_via_formulas", "literal_spans",
+    "recalc_via_com", "literal_spans",
     "RecalcResult", "XLFN_FUNCS", "XLFN_XLWS_FUNCS",
     "LABEL_CACHED", "LABEL_CALCULATED", "LABEL_FORMULA", "LABEL_ABSENT",
     "LABEL_VALUE",

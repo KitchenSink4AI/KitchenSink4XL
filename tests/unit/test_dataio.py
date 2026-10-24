@@ -95,7 +95,10 @@ def test_export_to_file(book, tmp_path):
     r = io.export_range(str(book), {"range": "A1:B3"}, fmt="csv",
                         out_file=str(out))
     assert "written_to" in r
-    assert out.read_text().startswith("Name,Amount")
+    # A CSV file starts with Excel's
+    # UTF-8 byte-order mark.
+    assert out.read_bytes().startswith(b"\xef\xbb\xbf")
+    assert out.read_text(encoding="utf-8-sig").startswith("Name,Amount")
 
 
 def test_import_export_roundtrip(book):

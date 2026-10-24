@@ -1,0 +1,28 @@
+{
+  "key_id": "ks4-int-web-2026",
+  "claim": {
+    "schema": 1,
+    "cert_type": "signing",
+    "issuer_key_id": "ks4-int-web-2026",
+    "key_id": "ks4-issuer-web-2026",
+    "public_key": "4OqvKRA5n3lyMTgJvxLplL2I0r6v7rIAuxh8rWOEcds=",
+    "valid_from": "2026-09-14",
+    "valid_to": "2027-09-14",
+    "scope": {
+      "name": "web",
+      "bands": [
+        "team",
+        "department"
+      ],
+      "products": [
+        "kitchensink4word-business",
+        "kitchensink4xl-business",
+        "kitchensink4ppt-business",
+        "kitchensink4web-business",
+        "kitchensink4workflow-*",
+        "ks4-workflow-*"
+      ]
+    }
+  },
+  "signature": "fEZDPLxsIaaD7H3EXHPhDAQIQqLMW8D7hgOVB19ayH0e/savpX5hyp851ODnjwrHPYF7c2rDrNRW3trXFpWZCw=="
+}

@@ -1,14 +1,13 @@
-"""Regressions for legacy .xls files and Excel-named comment anchors.
+"""Regressions for legacy .xls refusals and comment-anchor classification.
 
-A genuine .xls used to escape the envelope as a raw InvalidFileException
+A genuine .xls escaped the envelope as a raw InvalidFileException
 (advice pointing at xlrd); every file entry point now sniffs the 8-byte OLE
 magic and refuses honestly, naming the format and com_convert_format, with
-the encrypted-package kind told apart by stream names. A renamed BIFF file
-under .xlsx gets the same treatment; the sniff is extension-blind.
-
-Excel names comment anchors vmlDrawing*.vml, so every old file with a sticky
-note tripped HAZARD_REFUSED on plain edits; a VML content classifier now
-demotes content-verified Note-only anchors while form controls, drawn
+the encrypted-package kind told apart by stream names. A renamed BIFF
+file under .xlsx got the same misdiagnosis; the sniff is extension-blind.
+Excel names comment anchors vmlDrawing*.vml, so every real old file with a
+sticky note tripped HAZARD_REFUSED on plain edits; a VML content classifier
+now demotes content-verified Note-only anchors while form controls, drawn
 shapes, orphans, and unparseable parts stay flagged.
 """
 
@@ -72,7 +71,7 @@ def _rename_part(path: Path, old: str, new: str,
 
 
 # ======================================================================
-# legacy OLE containers refuse honestly
+# Legacy OLE containers refuse honestly
 # ======================================================================
 
 
@@ -201,9 +200,9 @@ class TestLegacyXlsHonestRefusal:
         assert "com_convert_format" in rep.error
 
     def test_com_tier_no_longer_calls_biff_encrypted(self, tmp_path):
-        # is_encrypted_package must not be a bare CFB-magic check, or the ONE
-        # useful route (com_convert_format) would refuse every genuine .xls
-        # as "password-protected".
+        # is_encrypted_package used to be a bare CFB-magic
+        # check, so the ONE useful route (com_convert_format) refused every
+        # genuine .xls as "password-protected".
         from xlsx_mcp.com import session as com_session
         biff = _biff_file(tmp_path, "conv.xls")
         assert com_session.is_encrypted_package(str(biff)) is False
@@ -256,6 +255,7 @@ class TestExcelNamedCommentAnchors:
             and c.author == "Author"
         wb.close()
 
+    @pytest.mark.usefixtures("rewrite_route")
     def test_form_control_vml_stays_flagged(self, tmp_path):
         book = _excel_named_comment_book(tmp_path, "ctrl.xlsx")
         _patch_part(book, "xl/drawings/vmlDrawing1.vml",

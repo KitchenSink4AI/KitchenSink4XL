@@ -44,9 +44,10 @@ def test_comment_add_needs_text(book):
 
 
 def test_comment_default_author(book):
+    from xlsx_mcp.core import authorship
     an.manage_comment(str(book), "add", location={"cell": "A1"}, text="x")
     wb = openpyxl.load_workbook(book)
-    assert wb["S"]["A1"].comment.author == an._DEFAULT_AUTHOR
+    assert wb["S"]["A1"].comment.author == authorship.signer(None)[0]
 
 
 def test_comment_edit_missing_refuses(book):

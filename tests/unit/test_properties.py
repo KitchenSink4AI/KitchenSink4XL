@@ -72,8 +72,13 @@ def test_manual_calc_mode_persists_with_caveat(tmp_path):
 def test_calc_mode_aliases_and_auto(tmp_path):
     p = _make(tmp_path)
     _properties.set_workbook_properties(p, calc_mode="auto_no_table")
+    # Reported in snake_case; the
+    # file still stores autoNoTable, and that spelling is still accepted.
     assert _properties.set_workbook_properties(
-        p)["calc"]["calc_mode"] == "autoNoTable"
+        p)["calc"]["calc_mode"] == "auto_no_table"
+    _properties.set_workbook_properties(p, calc_mode="autoNoTable")
+    assert _properties.set_workbook_properties(
+        p)["calc"]["calc_mode"] == "auto_no_table"
     out = _properties.set_workbook_properties(p, calc_mode="automatic")
     assert out["warnings"] == []
     assert _properties.set_workbook_properties(

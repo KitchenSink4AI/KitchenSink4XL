@@ -1,9 +1,14 @@
 """Public-copy guards: the published numbers must be the scripts' numbers.
 
-If the tool surface changes and the documentation does not, the suite goes
-red.
+The Word repo shipped stale marketing figures twice in launch week (an
+llms.txt claiming the wrong version, a site claiming a retired tool count),
+which is why this guard exists here from the first release instead of after
+the first mistake. It makes the failure mode mechanical: if the surface
+changes and the copy does not, the suite goes red.
 
-Guarded files: README.md and docs/llms.txt.
+Guarded files: README.md, docs/llms.txt and docs/index.html. The page is a
+redirect stub to the community site, so it carries no figures: the figures
+are pinned in README.md and docs/llms.txt (_figure_files).
 
 The operations snapshot guard is the one to understand. count_operations.py
 derives the headline operations figure from committed source, and
@@ -34,9 +39,13 @@ SNAPSHOT = ROOT / "scripts" / "operations_snapshot.json"
 
 #: The figures the public copy currently claims. Change these only together
 #: with the copy itself.
-PUBLISHED_OPERATIONS = 129
-PUBLISHED_TOOLS_TOTAL = 69      # 67 workbook tools + enable_tools/disable_tools
-PUBLISHED_TOOLS_LITE = 40
+PUBLISHED_OPERATIONS = 131
+#: The family surface (2.0): seven fixed tools holding 69 operations. Every
+#: check against README, llms.txt or docs/index.html figures is a RELEASE GATE
+#: (marker public_copy; runs with KS4XL_RELEASE_GATE=1, which the release ship
+#: gate sets) and passes as of the 2.0 copy pass.
+SURFACE_TOOLS = 7
+SURFACE_OPS = 69
 BETA_LABEL = re.compile(r"\bbeta\b", re.IGNORECASE)
 
 
@@ -44,8 +53,15 @@ def _public_files() -> list[Path]:
     candidates = [
         ROOT / "README.md",
         ROOT / "docs" / "llms.txt",
+        ROOT / "docs" / "index.html",
     ]
     return [p for p in candidates if p.exists()]
+
+
+def _figure_files() -> list[Path]:
+    """The files that carry the published figures (docs/index.html is a
+    redirect stub and carries none)."""
+    return [ROOT / "README.md", ROOT / "docs" / "llms.txt"]
 
 
 def _run(script: str, *args: str) -> str:
@@ -57,14 +73,16 @@ def _run(script: str, *args: str) -> str:
     return out.stdout
 
 
-def _measured() -> tuple[int, int, int]:
-    """(lite tools, full tools, operations), straight from the scripts."""
-    surf = _run("measure_surface.py")
+def _measured() -> tuple[dict, int]:
+    """(the fixed surface as measured over real stdio, operations), straight
+    from the scripts."""
+    surf = json.loads(_run("measure_surface.py", "--json").strip().splitlines()[-1])
     ops = _run("count_operations.py")
-    lite = int(re.search(r"lite startup surface: (\d+) tools", surf).group(1))
-    full = int(re.search(r"full surface .*?: (\d+) tools", surf).group(1))
     n_ops = int(re.search(r"TOTAL DISTINCT OPERATIONS:\s+(\d+)", ops).group(1))
-    return lite, full, n_ops
+    return surf, n_ops
+
+
+public_copy = pytest.mark.public_copy
 
 
 def test_operations_snapshot_matches_source():
@@ -79,97 +97,59 @@ def test_operations_snapshot_matches_source():
     assert stored["total_operations"] == PUBLISHED_OPERATIONS
 
 
+@public_copy
 def test_published_numbers_match_scripts():
     """The headline figures in the public copy are the scripts' figures."""
-    lite, full, n_ops = _measured()
-    assert (lite, full, n_ops) == (
-        PUBLISHED_TOOLS_LITE, PUBLISHED_TOOLS_TOTAL, PUBLISHED_OPERATIONS
+    surf, n_ops = _measured()
+    assert (surf["tools"], surf["ops"], n_ops) == (
+        SURFACE_TOOLS, SURFACE_OPS, PUBLISHED_OPERATIONS
     ), (
-        f"scripts now report lite={lite} full={full} ops={n_ops}; update the "
-        "public copy AND this test together (that is the whole point)."
+        f"scripts now report tools={surf['tools']} ops={surf['ops']} "
+        f"operations={n_ops}; update the public copy AND this test together."
     )
-    workbook_tools = full - 2  # excluding enable_tools/disable_tools
-    for path in _public_files():
+    for path in _figure_files():
         text = path.read_text(encoding="utf-8")
         assert str(n_ops) in text, f"{path.name} is missing the operations count"
-
-    # README and llms.txt spell out the relationship ("129 operations across
-    # 67 tools, plus two pack toggles"), so they carry the workbook figure.
-    for name, expected in (("README.md", workbook_tools),
-                           ("llms.txt", workbook_tools)):
-        matches = [p for p in _public_files() if p.name == name]
-        if not matches:
-            continue
-        text = matches[0].read_text(encoding="utf-8")
-        assert str(expected) in text, (
-            f"{name} is missing its tool total ({expected})"
-        )
+        assert str(surf["ops"]) in text, f"{path.name} is missing the op count"
 
 
+@public_copy
 def test_token_headlines_match_measurement():
-    """The lite and full token figures in every public file are measured."""
-    surf = _run("measure_surface.py")
-    lite_k = re.search(r"lite startup surface: \d+ tools, ~([\d.]+)k",
-                       surf).group(1)
-    full_k = re.search(r"full surface .*?: \d+ tools, ~([\d.]+)k",
-                       surf).group(1)
-
-    def variants(k: str) -> list[str]:
-        n = int(round(float(k) * 1000))
-        comma = f"{n:,}"
-        return [f"{k}k", comma] + [comma.replace(",", s)
-                                   for s in (".", " ", " ", " ")]
-
-    for path in _public_files():
+    """The fixed surface's token figure in every public file is measured."""
+    surf, _ = _measured()
+    n = surf["approx_tokens"]
+    k = f"{n / 1000:.1f}k"
+    comma = f"{n:,}"
+    variants = [k, comma] + [comma.replace(",", sep)
+                             for sep in (".", " ", "\u00a0", "\u202f")]
+    for path in _figure_files():
         text = path.read_text(encoding="utf-8")
-        for label, k in (("lite", lite_k), ("full", full_k)):
-            assert any(v in text for v in variants(k)), (
-                f"{path.name}: measured {label} figure ~{k}k appears in no "
-                f"accepted format {variants(k)}"
-            )
+        assert any(v in text for v in variants), (
+            f"{path.name}: measured surface figure {n} appears in no accepted "
+            f"format {variants}")
 
 
-def test_pack_tables_match_measurement():
-    """Every pack row in the README carries the measured tools and tokens."""
-    surf = _run("measure_surface.py")
-    rows = re.findall(r"^([a-z][\w-]*)\s+(\d+)\s+(~?[\d.]+k)\s*$", surf, re.M)
-    assert len(rows) >= 4, f"measure_surface pack table not parsed: {rows!r}"
+@public_copy
+def test_readme_surface_table_matches_measurement():
+    """Every tool row in the README surface table carries its measured op
+    count and tokens (the table the pack table became)."""
+    surf, _ = _measured()
     lines = (ROOT / "README.md").read_text(encoding="utf-8").splitlines()
-    for pack, tools, toks in rows:
-        cands = [ln for ln in lines
-                 if ln.startswith(f"| {pack} ") or ln.startswith(f"| **{pack}**")]
-        assert cands, f"README pack table has no row for {pack!r}"
-        ln = cands[0]
-        assert f" {tools} " in ln and toks.lstrip("~") in ln, (
-            f"README row for {pack!r} does not carry measured "
-            f"{tools} tools / {toks}: {ln!r}"
-        )
-
-
-def test_llms_txt_pack_costs_match_measurement():
-    """The agent-facing doc's per-pack costs are measured too.
-
-    The pack line under the headline figures drifted once, so it is measured
-    too.
-    """
-    surf = _run("measure_surface.py")
-    rows = dict((p, t) for p, _n, t in
-                re.findall(r"^([a-z][\w-]*)\s+(\d+)\s+~?([\d.]+k)\s*$",
-                           surf, re.M))
-    text = (ROOT / "docs" / "llms.txt").read_text(encoding="utf-8")
-    line = next((ln for ln in text.splitlines() if "Pack costs" in ln), None)
-    assert line, "llms.txt no longer carries a pack-costs line"
-    for pack in ("design", "io", "com"):
-        assert rows[pack] in line, (
-            f"llms.txt pack costs claim something other than the measured "
-            f"{pack} {rows[pack]}: {line!r}")
+    for row in surf["rows"]:
+        cands = [ln for ln in lines if ln.startswith(f"| `{row['tool']}`")]
+        assert cands, f"README surface table has no row for {row['tool']!r}"
+        k = f"{row['approx_tokens'] / 1000:.1f}k"
+        assert f" {row['ops']} " in cands[0] and k in cands[0], (row, cands[0])
 
 
 def test_calc_labels_in_llms_txt_are_the_wire_values():
     """The agent-facing doc uses the labels the code actually emits.
 
-    This guard keeps llms.txt reading the constants in core/calc.py rather
-    than a copy of them, so any divergence goes red.
+    The lay-facing copy and the wire used to disagree: the website said
+    "calculated" where core/calc.py emitted `computed`, and an agent branching
+    on the marketing word got nothing. The pre-release rename settled it on
+    `calculated` in both places. This guard keeps llms.txt reading the
+    constants rather than a copy of them, so the next divergence goes red.
     """
     sys.path.insert(0, str(ROOT / "src"))
     from xlsx_mcp.core import calc
@@ -182,6 +162,7 @@ def test_calc_labels_in_llms_txt_are_the_wire_values():
         )
 
 
+@public_copy
 def test_closed_error_codes_are_all_documented():
     """Every code an agent can receive appears in llms.txt Section 5."""
     sys.path.insert(0, str(ROOT / "src"))
@@ -192,16 +173,17 @@ def test_closed_error_codes_are_all_documented():
     assert not missing, f"llms.txt does not document error codes: {missing}"
 
 
-def test_pack_membership_matches_llms_txt():
-    """Every registered tool is listed under its pack in llms.txt."""
+@public_copy
+def test_tool_membership_matches_llms_txt():
+    """Every tool and every op is named in llms.txt."""
     sys.path.insert(0, str(ROOT / "src"))
-    from xlsx_mcp import packs, server  # noqa: F401  (server registers tools)
+    from xlsx_mcp.surface.groups import GROUPS, TOOL_NAMES
 
     text = (ROOT / "docs" / "llms.txt").read_text(encoding="utf-8")
     listed = set(re.findall(r"`([a-z_0-9]+)`", text))
-    for pack, members in packs.tool_names().items():
-        missing = [m for m in members if m not in listed]
-        assert not missing, f"llms.txt pack {pack!r} is missing {missing}"
+    missing = [n for n in TOOL_NAMES if n not in listed]
+    missing += [op for ops in GROUPS.values() for op in ops if op not in listed]
+    assert not missing, f"llms.txt is missing {missing}"
 
 
 @pytest.mark.parametrize("path", _public_files(), ids=lambda p: p.name)
@@ -214,10 +196,17 @@ def test_no_em_dashes_in_public_copy(path: Path):
 def test_documented_module_entry_point_resolves():
     """The README's `python -m` line must name a module that can be run.
 
-    The distribution is kitchensink4xl and the package is xlsx_mcp, so
-    `import kitchensink4xl` fails. The docs name `python -m xlsx_mcp.server`
-    and the shorter `python -m xlsx_mcp`; both modules have to stay runnable
-    and reach the same entry point the console scripts do.
+    The install gauntlet found the guessable names all wrong: the
+    distribution is kitchensink4xl, the package is xlsx_mcp, and
+    `import kitchensink4xl` fails. README now points at
+    `python -m xlsx_mcp.server`, so that module has to stay runnable, and it
+    has to reach the same entry point the console scripts do.
+
+    1.1 adds the shorter `python -m xlsx_mcp` route to the same two
+    documents, which is why both routes are asserted here rather than only
+    the `.server` one: the package `__main__` shipped in 1.0.0's tree but
+    not in its release, so until now the docs deliberately named only the
+    route the published wheel could honor.
     """
     import importlib.util
 
@@ -243,7 +232,10 @@ def test_mcp_name_marker_survives():
     ), "README line 1 mcp-name marker was lost"
 
 
-#: The canonical non-affiliation disclaimer.
+#: The disclaimer as the canonical license block words it. It
+#: says one more thing than the wording it replaced ("or sponsored by"),
+#: so the guard moved with it rather than being loosened to a substring
+#: that both spellings happen to share.
 DISCLAIMER = (
     "Not affiliated with, endorsed by, or sponsored by Microsoft "
     "Corporation."
@@ -251,7 +243,7 @@ DISCLAIMER = (
 
 
 def test_non_affiliation_disclaimer_present():
-    for path in _public_files():
+    for path in _figure_files():
         assert DISCLAIMER in path.read_text(encoding="utf-8"), (
             f"{path.name} is missing the non-affiliation disclaimer")
 
@@ -288,8 +280,17 @@ def test_version_is_consistent_across_manifests():
     )
 
 
-# The version stamp the manifest guard above does not read: the llms.txt
-# Release line an agent reads first.
+# The two version stamps the manifest guard above does not read. Both were
+# bumped by hand at every release through 1.2.4 with nothing to catch a miss:
+# the llms.txt Release line an agent reads first, and the download links,
+# where a miss sends a Claude Desktop user to an older bundle. (The showroom
+# that carried the download buttons is now a redirect stub; the links that
+# remain are in README.md and docs/llms.txt.)
+
+#: Every release-asset link in the public copy, whatever version it names.
+RELEASE_DOWNLOAD_LINK = re.compile(
+    r"https://github\.com/KitchenSink4AI/KitchenSink4XL/releases/download/"
+    r"[^\"\s<>)]*")
 
 
 def _pyproject_version() -> str:
@@ -300,6 +301,7 @@ def _pyproject_version() -> str:
     )["project"]["version"]
 
 
+@public_copy
 def test_llms_txt_release_line_matches_the_package_version():
     version = _pyproject_version()
     text = (ROOT / "docs" / "llms.txt").read_text(encoding="utf-8")
@@ -308,6 +310,20 @@ def test_llms_txt_release_line_matches_the_package_version():
     assert release_lines == [f"Release: v{version}"], (
         f"docs/llms.txt Release line(s) {release_lines!r} do not match "
         f"pyproject version {version}")
+
+
+@public_copy
+def test_release_download_links_match_the_package_version():
+    version = _pyproject_version()
+    expected = ("https://github.com/KitchenSink4AI/KitchenSink4XL/releases/"
+                f"download/v{version}/kitchensink4xl-{version}.mcpb")
+    stale = []
+    for path in _figure_files():
+        links = RELEASE_DOWNLOAD_LINK.findall(path.read_text(encoding="utf-8"))
+        stale += [(path.name, link) for link in links if link != expected]
+    assert not stale, (
+        f"release download links do not match pyproject version "
+        f"{version}: {stale}")
 
 
 @pytest.mark.parametrize(
@@ -323,7 +339,7 @@ def test_beta_label_detection(text: str, has_beta_label: bool):
 
 
 def test_no_beta_language_in_public_copy():
-    """The product is not labelled beta anywhere in the public copy."""
+    """Excel ships as a full 1.0. No beta labels anywhere."""
     for path in _public_files():
         text = path.read_text(encoding="utf-8")
         assert BETA_LABEL.search(text) is None, (

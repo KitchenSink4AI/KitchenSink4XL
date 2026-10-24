@@ -1,9 +1,9 @@
 """Guard: no tool parameter reaches a client as an empty schema.
 
 A parameter annotated ``Any`` serializes to ``{}``. That is the literal
-defect that makes some clients drop a server's tools: OpenCode
-rejects the tools with "could not understand the instance {}" and removes
-them, and Gemini CLI skips them as missing types. A tool a client silently
+defect that cost the incumbent server its adoption in two clients: OpenCode
+rejected its tools with "could not understand the instance {}" and removed
+them, and Gemini CLI skipped them as missing types. A tool a client silently
 deletes has zero coverage, so this is a distribution bug wearing a typing
 bug's clothes, and it is worth a standing guard rather than a one-time fix.
 
@@ -24,7 +24,8 @@ import json
 
 import pytest
 
-from xlsx_mcp import packs, server  # noqa: F401  (the import registers tools)
+from xlsx_mcp import registry, server  # noqa: F401  (the import registers ops)
+from xlsx_mcp.surface import help as help_mod
 from xlsx_mcp.core import schemas
 
 #: Keys that carry no type information on their own. A parameter whose
@@ -56,14 +57,14 @@ LOCATION_PARAMS = {
 
 
 def _all_tools() -> dict:
-    out = {}
-    for tools in packs._REGISTRY.values():
-        out.update(tools)
-    return out
+    """FAMILY SURFACE: each op's argument schema as xl_help serves it (the
+    schema a client reads before a call); the seven wire tools carry only
+    {op, args} and are checked by test_family_surface.py."""
+    return {n: help_mod.args_schema(s) for n, s in registry.public_ops().items()}
 
 
 def _params(tool) -> dict:
-    return (getattr(tool, "parameters", None) or {}).get("properties", {}) or {}
+    return (tool or {}).get("properties", {}) or {}
 
 
 def _is_empty(schema: dict) -> bool:
@@ -142,8 +143,8 @@ def test_every_addressing_parameter_carries_the_location_schema(
     transport artifact for a whole round. Naming both branches closes it;
     enumerating the selectors inside the object branch does not close it any
     further and costs about 270 tokens on each of these parameters, so the
-    vocabulary lives in the instructions and the refusals instead (see
-    LOCATION_SCHEMA).
+    vocabulary lives in the instructions and the refusals instead (the
+    reasoning is recorded on LOCATION_SCHEMA).
     """
     tools = _all_tools()
     assert tool_name in tools, f"{tool_name} is no longer a tool"
@@ -158,7 +159,7 @@ def test_every_addressing_parameter_carries_the_location_schema(
 
 
 def test_the_addressing_schema_stays_types_only():
-    """The token-cost design, kept from drifting back by hand.
+    """The cost decision, kept from drifting back by hand.
 
     Re-enumerating the selectors here is what took lite from ~11.7k to
     ~21.2k tokens. If a future release wants them back, this test is the
@@ -184,14 +185,22 @@ def test_the_selector_vocabulary_is_documented_where_a_client_reads_it():
     from xlsx_mcp.core import locate
     from xlsx_mcp import server
 
-    text = server.mcp.instructions or ""
+    from xlsx_mcp.surface import copy
+
+    # FAMILY SURFACE: the vocabulary is named in the server instructions and
+    # explained, with worked examples, by xl_help(topic='location').
     aliases = {"a1", "named_range"}
-    for selector in set(locate.SELECTORS) - aliases:
-        assert selector in text, (
-            f"the {selector!r} selector is not named in the server "
-            "instructions, so nothing tells a client it exists")
-    assert '{"cell": "B7", "sheet": "Q3"}' in text, (
-        "the instructions carry no worked location example")
+    for text in (server.instructions_for(server._license_policy.active()),
+                 copy.LOCATION_HELP):
+        for selector in set(locate.SELECTORS) - aliases:
+            assert selector in text, (
+                f"the {selector!r} selector is not named where a client "
+                "reads it, so nothing tells a client it exists")
+    # Re-pinned: the copy is
+    # filled, so the worked example with a sibling sheet is required
+    # verbatim again, as it was in the released server's instructions.
+    assert '{"cell": "B7", "sheet": "Q3"}' in copy.LOCATION_HELP, (
+        "the location help carries no worked location example with a sheet")
 
 
 def test_the_schema_is_inlined_rather_than_referenced():
@@ -200,7 +209,7 @@ def test_the_schema_is_inlined_rather_than_referenced():
     class of client skip in a new form. The cost is repetition, paid
     knowingly."""
     for name, tool in sorted(_all_tools().items()):
-        blob = json.dumps(getattr(tool, "parameters", None) or {})
+        blob = json.dumps(tool or {})
         assert "$ref" not in blob, f"{name} ships a $ref"
         assert "$defs" not in blob, f"{name} ships a $defs"
 

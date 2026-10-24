@@ -45,6 +45,64 @@ def _render_cell(v: Any) -> str:
     return s.replace("|", "\\|").replace("\n", " ")
 
 
+def _not_shown(path: str, fws, r0: int, c0: int, r1: int, c1: int) -> dict:
+    """What the table leaves out, so a reader knows it is
+    there: the notes and threaded comments on the shown cells, and the
+    charts and images on the sheet, each with the op that reads it."""
+    out: dict[str, dict] = {}
+    cells = [gridio.a1(r, c) for (r, c), cell in (getattr(fws, "_cells", None) or {}).items()
+             if r0 <= r <= r1 and c0 <= c <= c1 and getattr(cell, "comment", None) is not None]
+    from openpyxl.utils.cell import coordinate_from_string, column_index_from_string
+
+    from .annotations import threaded_comments
+    for (title, ref), _th in threaded_comments(path).items():
+        if title != fws.title or ref in cells:
+            continue
+        col, row = coordinate_from_string(ref)
+        if r0 <= row <= r1 and c0 <= column_index_from_string(col) <= c1:
+            cells.append(ref)
+    if cells:
+        out["comments"] = {"count": len(cells), "cells": sorted(cells)[:20],
+                           "read_with": "xl_format manage_comment action='list'"}
+    from .objects import _anchor_cell, chart_kind
+    charts = [{"chart_type": chart_kind(ch), "at_cell": _anchor_cell(ch)}
+              for ch in getattr(fws, "_charts", [])]
+    if charts:
+        out["charts"] = {"count": len(charts), "items": charts[:20],
+                         "read_with": "xl_format manage_chart action='list'"}
+    # Pictures from the drawing parts themselves: openpyxl only loads
+    # a picture when Pillow is installed, so the model can be blind to all of
+    # them. The same read counts what no op lists cell by cell.
+    try:
+        from ..core import pkginfo as _pkginfo
+        objs = _pkginfo.drawing_objects(check_path(path, "open workbook"),
+                                        fws.title).get(fws.title, [])
+        extra = _pkginfo.hidden_objects(check_path(path, "open workbook")).get(fws.title, {})
+    except Exception:  # noqa: BLE001
+        objs, extra = None, {}
+    if objs is None:
+        images = [_anchor_cell(im) for im in getattr(fws, "_images", [])]
+    else:
+        images = [o["anchor"]["from"] for o in objs if o["kind"] == "picture"]
+    if images:
+        out["images"] = {"count": len(images), "at_cells": images[:20],
+                         "read_with": "xl_format manage_image action='list'"}
+    shapes = sum(extra.get(k, 0) for k in ("shapes", "shape_groups", "connectors"))
+    if shapes:
+        out["shapes"] = {"count": shapes,
+                         "read_with": "not listed by any op; Excel shows them"}
+    if extra.get("x14_validations"):
+        out["validations"] = {"count": extra["x14_validations"],
+                              "read_with": "xl_structure manage_data_validation action='list'"}
+    if extra.get("sparkline_groups"):
+        out["sparklines"] = {"count": extra["sparkline_groups"],
+                             "read_with": "not listed by any op; Excel shows them"}
+    if extra.get("slicer_lists"):
+        out["slicers"] = {"count": extra["slicer_lists"],
+                          "read_with": "not listed by any op; Excel shows them"}
+    return out
+
+
 def get_grid_view(path: str, location: Any = None, sheet: str | None = None,
                   max_rows: int = DEFAULT_VIEW_ROWS,
                   max_cols: int = DEFAULT_VIEW_COLS,
@@ -54,12 +112,20 @@ def get_grid_view(path: str, location: Any = None, sheet: str | None = None,
     hazard summary. Reads only; paginates with max_rows / max_cols.
 
     location defaults to the sheet's TRUE used range. values='cached' shows last
-    calculated values (formula cells marked), 'formula' shows formula strings.
-    The returned dimensions and truncated flags say when the view was clipped so
-    the caller can page. Nothing is written.
+    calculated values (formula cells marked) and adds `shows` for the shown
+    cells whose text in Excel differs from their value; 'formula' shows formula
+    strings. The returned dimensions and truncated flags say when the view was
+    clipped so the caller can page; not_shown names the comments, charts and
+    images the table leaves out, with the op that reads each. Nothing is
+    written.
     """
     if values not in ("cached", "formula"):
-        raise XlMcpError("values must be 'cached' or 'formula'")
+        raise XlMcpError(
+            f"get_grid_view takes values 'cached' or 'formula', not {values!r}; "
+            "its cached view adds shows, the text Excel shows where it differs "
+            "from the value. read_range also takes 'both', which labels each "
+            "cell cached, absent or formula, and values='displayed', the text "
+            "of every cell")
     max_rows = max(1, min(int(max_rows), _MAX_VIEW_ROWS))
     max_cols = max(1, min(int(max_cols), _MAX_VIEW_COLS))
     disp_wb = gridio.open_wb(path, data_only=(values == "cached"))
@@ -88,17 +154,25 @@ def get_grid_view(path: str, location: Any = None, sheet: str | None = None,
         sep = "|---|" + "|".join("---" for _ in cols) + "|"
         lines = [header, sep]
         formula_cells: dict[str, str] = {}
+        differs = gridio.ShownText(path, gridio.is_1904(dws)) \
+            if values == "cached" else None
         for r in range(grid.min_row, end_row + 1):
             cells = []
             for c in cols:
                 fv = fws.cell(r, c).value
                 is_formula = _calc.is_formula_cell(fws.cell(r, c))
                 if values == "formula" and is_formula:
-                    text = _render_cell(fv)
+                    # The form read_range returns.
+                    text = _render_cell(_calc.denormalize_formula(fv)
+                                        if isinstance(fv, str) else fv)
                 else:
-                    text = _render_cell(dws.cell(r, c).value)
+                    dv = dws.cell(r, c).value
+                    text = _render_cell(dv)
+                    if differs is not None and dv is not None:
+                        differs.add(grid.sheet, r, c, dv, dws.cell(r, c).number_format)
                     if is_formula:
-                        formula_cells[gridio.a1(r, c)] = fv
+                        formula_cells[gridio.a1(r, c)] = (
+                            _calc.denormalize_formula(fv) if isinstance(fv, str) else fv)
                         if not text:
                             text = "\u0192"  # florin: formula, no cached value
                 cells.append(text)
@@ -116,7 +190,8 @@ def get_grid_view(path: str, location: Any = None, sheet: str | None = None,
         # region changed after this view. Cells inside stay plain A1.
         anchor = _locate.make_anchor(
             fws, grid.min_row, grid.min_col, end_row, end_col)
-        return {
+        hidden = _not_shown(path, fws, grid.min_row, grid.min_col, end_row, end_col)
+        out = {
             "sheet": grid.sheet,
             "used_range": grid.a1,
             "anchor": anchor,
@@ -126,10 +201,22 @@ def get_grid_view(path: str, location: Any = None, sheet: str | None = None,
             "truncated": {"rows": truncated_rows, "cols": truncated_cols},
             "value_mode": values,
             "table": "\n".join(lines),
+            **(differs.fields() if differs is not None else {}),
             "formula_cells": formula_cells,
             "merged_cells": merges,
             "hazards": rep.labels(),
         }
+        if hidden:
+            out["not_shown"] = hidden
+        out.update(gridio.broken_shared_fields(
+            path, grid.sheet, rect=(grid.min_row, grid.min_col, end_row, end_col)))
+        if values == "cached" and formula_cells:
+            # The shown results may predate a recalculation
+            # the workbook is still owed.
+            pending = gridio.pending_recalc_note(path)
+            if pending:
+                out["cached_note"] = pending
+        return out
     finally:
         disp_wb.close()
         formula_wb.close()
@@ -212,7 +299,7 @@ def apply_edits(path: str, edits: list, allow_loss: bool = False,
         ws = pkg.workbook[grid.sheet]
         if op == "set_value":
             pkg.set_cell(grid.sheet, gridio.a1(grid.min_row, grid.min_col),
-                         edit["value"])
+                         edit["value"], from_caller=True)
             touched += 1
         elif op == "set_formula":
             pkg.set_formula(grid.sheet,
@@ -239,7 +326,7 @@ def apply_edits(path: str, edits: list, allow_loss: bool = False,
             for i2, row in enumerate(data):
                 for j2, val in enumerate(row):
                     pkg.set_cell(grid.sheet, gridio.a1(top + i2, left + j2),
-                                 val)
+                                 val, from_caller=True)
                     touched += 1
 
     result = pkg.save(allow_loss=allow_loss, backup=backup,

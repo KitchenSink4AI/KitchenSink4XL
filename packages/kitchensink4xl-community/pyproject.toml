@@ -1,0 +1,45 @@
+[project]
+name = "kitchensink4xl"
+version = "2.0.0"
+description = "Read and edit Excel (.xlsx) files with your AI assistant: 131 actions, a backup before every change, formulas, tables, CSV and JSON, and a clear label on every calculated, cached or missing value. Local MCP server for Claude Code, Codex CLI and other MCP clients."
+readme = "README.md"
+license = "AGPL-3.0-only"
+license-files = ["LICENSE", "NOTICE.md"]
+authors = [{ name = "KitchenSink4AI", email = "support@kitchensink4.ai" }]
+keywords = [
+    "mcp", "excel", "xlsx", "ooxml", "spreadsheet", "claude",
+    "model-context-protocol", "openpyxl",
+]
+requires-python = ">=3.12"
+dependencies = [
+    "fastmcp>=3.4,<4",
+    "openpyxl",
+    "lxml",
+    "regex",
+    "packaging",
+    "kitchensink4-license-community",
+]
+
+[project.optional-dependencies]
+# The COM tier stays an opt-in extra on the edition distribution, so
+# `pip install kitchensink4xl[com]` keeps working exactly as it did.
+com = ["pywin32; sys_platform == 'win32'"]
+
+[project.urls]
+Homepage = "https://kitchensink4.ai"
+Documentation = "https://github.com/KitchenSink4AI/KitchenSink4XL#readme"
+Repository = "https://github.com/KitchenSink4AI/KitchenSink4XL"
+Issues = "https://github.com/KitchenSink4AI/KitchenSink4XL/issues"
+
+# The public command names are unchanged. They are facades now: each one
+# injects the Community policy and then starts the shared core.
+[project.scripts]
+xl-mcp = "ks4xl_community_launch:main"
+kitchensink4xl = "ks4xl_community_launch:main"
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

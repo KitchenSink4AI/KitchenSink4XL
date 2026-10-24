@@ -1,60 +1,313 @@
 name: Publish to PyPI
 
-# A published GitHub Release is the only trigger, and the pypi environment
-# requires approval before anything is uploaded. To retry a failed publish,
-# re-run this workflow from its own Actions run.
+# A published GitHub Release is the ONLY thing that publishes a version.
+#
+# workflow_dispatch was removed for security. It
+# let anyone holding a gh token with workflow scope publish to PyPI from a
+# branch, with no Release, no tag and no approval, and Trusted Publishing did
+# nothing to stop that: it authenticates the repository, not the intent. The
+# pypi environment now also requires manual approval and only accepts main
+# or a v* tag, so the dispatch path was the last way around a human.
+#
+# To publish: cut a Release. To retry a failed publish: re-run this workflow
+# from its own Actions run, which keeps the Release as the thing that authorized
+# it.
 on:
   release:
     types: [published]
 
+# One run per release tag at a time, and a run is never cancelled part-way through a
+# publish: a re-run or a duplicate event waits for the run in progress. (A concurrency
+# group cannot coordinate different repositories; the shared license adapter therefore
+# has one publisher, the license repository KitchenSink4AI/kitchensink4-license-community, and every
+# editor only verifies the exact wheel it published.)
+concurrency:
+  group: publish-${{ github.repository }}-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  # The public repository builds and tests the Community edition only.
+  KS4_ADAPTER_EDITION: community
+
 jobs:
-  build:
+  # ------------------------------------------------------------ release gate
+  # The README and site figure tests (marker public_copy) are skipped in
+  # ordinary runs and run here, with KS4XL_RELEASE_GATE=1, before anything is
+  # built. build needs this job, and publish needs build, so a release
+  # cannot reach PyPI while they are red. The gate fails closed: it also fails
+  # when no public_copy test ran or one was skipped.
+  # tests/unit/test_deadline_sites_and_served_hints.py pins this wiring.
+  # The license adapters are read exactly as tests.yml reads them.
+  release-gate:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # A release publishes only a commit that is already on public main.
+      - name: The release commit is on public main
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$RELEASE_SHA" refs/remotes/origin/main
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.12"
-      - name: Build sdist and wheel
-        run: |
-          python -m pip install --upgrade build
-          python -m build
-      - uses: actions/upload-artifact@v4
+      # The Community license adapter is one shared source, read from the reviewed public
+      # KitchenSink4Word release commit that scripts/adapter_source.py pins
+      # (PUBLIC_ADAPTER_COMMIT) and checked against COMMUNITY_DIGEST before any use.
+      # The Business adapter is never part of a public run.
+      - name: Community license adapter pin
+        id: adapter-pin
+        shell: bash
+        run: python scripts/adapter_source.py --public-pin >> "$GITHUB_OUTPUT"
+      - name: Community license adapter (pinned public commit)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          name: dist
-          path: dist/
+          repository: ${{ steps.adapter-pin.outputs.repository }}
+          ref: ${{ steps.adapter-pin.outputs.commit }}
+          path: _adapter_source
+          persist-credentials: false
+      - name: Move the Community adapter outside the source tree
+        shell: bash
+        env:
+          PIN_COMMIT: ${{ steps.adapter-pin.outputs.commit }}
+          PIN_PATH: ${{ steps.adapter-pin.outputs.path }}
+        run: |
+          set -euo pipefail
+          test "$(git -C _adapter_source rev-parse HEAD)" = "$PIN_COMMIT"
+          mkdir "$RUNNER_TEMP/ks4-license-adapters"
+          cp -r "_adapter_source/$PIN_PATH" "$RUNNER_TEMP/ks4-license-adapters/"
+          rm -rf _adapter_source
+          echo "KS4_LICENSE_ADAPTERS=$RUNNER_TEMP/ks4-license-adapters" >> "$GITHUB_ENV"
+      - name: Check the Community adapter against its recorded digest
+        shell: bash
+        run: python scripts/adapter_source.py
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Public copy gate (README and site figures)
+        env:
+          KS4XL_RELEASE_GATE: "1"
+        run: |
+          python -m pytest tests/unit -q -m public_copy -rs --junitxml=release-gate.xml
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          suite = ET.parse("release-gate.xml").getroot()
+          suite = suite if suite.tag == "testsuite" else suite.find("testsuite")
+          tests, skipped = int(suite.get("tests")), int(suite.get("skipped"))
+          failed = int(suite.get("failures")) + int(suite.get("errors"))
+          print(f"public_copy gate: {tests} ran, {skipped} skipped, {failed} failed")
+          if tests == 0 or skipped or failed:
+              raise SystemExit("the public_copy release gate did not run clean")
+          PY
 
-  publish:
+  build:
+    needs: release-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      # The Community license adapter is one shared source, read from the reviewed public
+      # KitchenSink4Word release commit that scripts/adapter_source.py pins
+      # (PUBLIC_ADAPTER_COMMIT) and checked against COMMUNITY_DIGEST before any use.
+      # The Business adapter is never part of a public run.
+      - name: Community license adapter pin
+        id: adapter-pin
+        shell: bash
+        run: python scripts/adapter_source.py --public-pin >> "$GITHUB_OUTPUT"
+      - name: Community license adapter (pinned public commit)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ steps.adapter-pin.outputs.repository }}
+          ref: ${{ steps.adapter-pin.outputs.commit }}
+          path: _adapter_source
+          persist-credentials: false
+      - name: Move the Community adapter outside the source tree
+        shell: bash
+        env:
+          PIN_COMMIT: ${{ steps.adapter-pin.outputs.commit }}
+          PIN_PATH: ${{ steps.adapter-pin.outputs.path }}
+        run: |
+          set -euo pipefail
+          test "$(git -C _adapter_source rev-parse HEAD)" = "$PIN_COMMIT"
+          mkdir "$RUNNER_TEMP/ks4-license-adapters"
+          cp -r "_adapter_source/$PIN_PATH" "$RUNNER_TEMP/ks4-license-adapters/"
+          rm -rf _adapter_source
+          echo "KS4_LICENSE_ADAPTERS=$RUNNER_TEMP/ks4-license-adapters" >> "$GITHUB_ENV"
+      - name: Check the Community adapter against its recorded digest
+        shell: bash
+        run: python scripts/adapter_source.py
+      # Two distributions per release. The app is built by the
+      # same script the release-candidate builds use. The shared license adapter is NOT rebuilt for
+      # PyPI: the exact wheel its own workflow published is fetched and checked against the
+      # file name and sha256 pinned in scripts/adapter_source.py, so the launcher pin, the
+      # plan and the final verification all compare against those very bytes. Wheels only;
+      # the .mcpb bundle is not a PyPI artifact.
+      - name: Build the Community app and license wheels
+        shell: bash
+        env:
+          PUBLISHED_AT: ${{ github.event.release.published_at }}
+        run: |
+          set -euo pipefail
+          archive_dir="$RUNNER_TEMP/release-source"
+          mkdir -p "$archive_dir"
+          git archive "$GITHUB_SHA" | tar -x -C "$archive_dir"
+          python -m pip install --upgrade pip "packaging>=24"
+          python -m pip install -e "${archive_dir}[dev]"
+          python "$archive_dir/scripts/build_editions.py" \
+            --edition community \
+            --output "$RUNNER_TEMP/edition-dist" \
+            --release-date "${PUBLISHED_AT%%T*}" \
+            --owner-test
+          mkdir -p pypi-dist/license pypi-dist/app
+          python scripts/adapter_source.py --fetch-wheel pypi-dist/license
+          cp "$RUNNER_TEMP"/edition-dist/community/kitchensink4xl-[0-9]*.whl pypi-dist/app/
+      # Fail before anything is uploaded unless the tag is exactly "v" + the canonical
+      # version, every source version field equals it, there is exactly one wheel of each
+      # kind, and the app pins the license adapter with one exact ==
+      # (parsed as PEP 508 requirements, canonical names).
+      - name: Check the release identity, the app and license wheels and the license pin
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: python scripts/release_verify.py check-build --product xl --tag "$RELEASE_TAG" --dist pypi-dist
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pypi-dist
+          path: pypi-dist/
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------ plan
+  # Which wheels are already on PyPI? A version that exists is skipped ONLY after its
+  # exact filename, its downloaded sha256 and its unpacked contents match the wheel built
+  # here (ZIP timestamps ignored). A mismatch fails the run: PyPI files cannot be
+  # replaced, so it needs a new version.
+  # This repository never uploads the shared license adapter: the license repository
+  # (KitchenSink4AI/kitchensink4-license-community) publishes it, and this run requires that exact
+  # wheel (pinned by sha256 in scripts/adapter_source.py) on PyPI.
+  plan:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      license: ${{ steps.plan.outputs.license }}
+      app: ${{ steps.plan.outputs.app }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - run: python -m pip install "packaging>=24"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: pypi-dist
+          path: pypi-dist/
+      - name: Plan the uploads
+        id: plan
+        run: python scripts/release_verify.py plan --product xl --dist pypi-dist --license-mode require
+
+  # --------------------------------------------------------------- publish
+  # The Community app owns its editing code and launcher. Require the exact
+  # shared license wheel on PyPI before publishing the existing app identity.
+  verify-dependencies:
+    needs: plan
+    if: ${{ !cancelled() && !failure() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - run: python -m pip install "packaging>=24"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: pypi-dist
+          path: pypi-dist/
+      - name: The license adapter is on PyPI and identical
+        run: python scripts/release_verify.py verify-remote --product xl --dist pypi-dist --kinds license --wait 900
+
+  publish-app:
+    needs: [plan, verify-dependencies]
+    if: ${{ !cancelled() && !failure() && needs.plan.outputs.app == 'upload' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment: pypi
     permissions:
       id-token: write  # trusted publishing, no tokens anywhere
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
-          name: dist
+          name: pypi-dist
           path: dist/
-      # Pinned by commit (v1.14.2).
-      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
+      - name: Publish kitchensink4xl
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
+        with:
+          packages-dir: dist/app/
+          attestations: true
+
+  # Both wheels on PyPI and identical to this run's wheels, before anything else depends
+  # on the release (the registry job below).
+  post-verify:
+    needs: [plan, verify-dependencies, publish-app]
+    if: ${{ !cancelled() && !failure() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - run: python -m pip install "packaging>=24"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: pypi-dist
+          path: pypi-dist/
+      - name: Both wheels are on PyPI and identical
+        run: python scripts/release_verify.py verify-remote --product xl --dist pypi-dist --wait 900
 
   # ---------------------------------------------------------------- registry
   # The MCP Registry entry, published after PyPI and never in front of it.
   #
-  # Non-blocking: `continue-on-error: true` keeps a registry outage from
-  # failing a successful PyPI release.
+  # NON-BLOCKING BY CONSTRUCTION. `continue-on-error: true` is on the job, so
+  # a registry outage, an expired OIDC audience or a slow PyPI page cannot
+  # turn a successful PyPI release red. The package is the release; the
+  # registry listing is how people find it.
   #
-  # The registry verifies ownership of a PyPI package by looking for the
-  # `mcp-name:` marker on the published project page, so the new version has
-  # to be live on PyPI before `publish` runs. The wait step polls for it and
-  # the publish step retries.
+  # ORDER MATTERS. The registry verifies ownership of a PyPI package by
+  # looking for the `mcp-name:` marker on the published project page, so the
+  # new version has to be live on PyPI before `publish` runs. The wait step
+  # polls for it and the publish step retries, because "live on the JSON API"
+  # and "rendered on the project page" are not the same instant.
   #
-  # Steps follow the registry's GitHub Actions example (OIDC variant), with
-  # the tool pinned to a release. If a run fails with "invalid audience",
-  # bump PUBLISHER_VERSION.
+  # Steps follow the registry's own GitHub Actions example (OIDC variant) in
+  # docs/modelcontextprotocol-io/github-actions.mdx, with the tool pinned to a
+  # release rather than `latest`. If a run ever fails with "invalid audience",
+  # that is the pin being too old for the deployed registry: bump PUBLISHER_VERSION.
   registry:
-    needs: publish
+    needs: post-verify
     runs-on: ubuntu-latest
+    # The PyPI wait polls up to 10 minutes; the publish step retries after it.
+    timeout-minutes: 30
     continue-on-error: true
     permissions:
       id-token: write  # required for OIDC authentication
@@ -63,7 +316,7 @@ jobs:
       PUBLISHER_VERSION: v1.8.1
       PYPI_PACKAGE: kitchensink4xl
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Wait for the new version to be live on PyPI
         run: |

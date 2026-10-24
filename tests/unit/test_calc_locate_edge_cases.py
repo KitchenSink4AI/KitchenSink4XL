@@ -1,13 +1,13 @@
-"""Edge-case tests for core/calc.py and core/locate.py.
+"""Re-audit tests for core/calc.py and core/locate.py.
 
-calc: the _xlfn future-function list covers the full documented set (a
-missing name means a silently broken formula write, shown as #NAME? or a
-repair-only file); the _xlws set is the documented {FILTER, SORT} pair;
-string literals are skipped by the shim; formula-only true-used-range
-semantics are pinned.
+calc: the _xlfn future-function list was expanded from ~34 names to the full
+documented set (a missing name means a silently broken formula write, proven
+by the early COM spike's #NAME?/repair-only findings); the _xlws set was
+corrected to the documented {FILTER, SORT} pair; string literals are now
+skipped by the shim; formula-only true-used-range semantics are pinned.
 
 locate: the used_range selector honors the sibling 'sheet' key; region
-probing does not instantiate cells into the model.
+probing no longer instantiates cells into the model.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from xlsx_mcp.core import calc, locate
 
 
 @pytest.mark.parametrize("name", [
-    # one representative per era of future functions
+    # one representative per era the pre-audit list missed entirely
     "NORM.DIST", "STDEV.P", "RANK.EQ", "NETWORKDAYS.INTL", "WORKDAY.INTL",
     "IFNA", "BITAND", "SHEET", "ISFORMULA", "FORECAST.LINEAR",
     "FORECAST.ETS", "MAP", "REDUCE", "BYROW", "MAKEARRAY", "STOCKHISTORY",
@@ -44,9 +44,9 @@ def test_classic_functions_never_prefixed():
 
 def test_xlws_set_is_filter_and_sort_only():
     """Documented storage uses _xlfn._xlws. for FILTER and SORT only. The
-    SORTBY/UNIQUE/SEQUENCE/RANDARRAY/ANCHORARRAY/SINGLE must not be routed
-    through _xlws, which risks a repair-only file for a mis-prefixed dynamic
-    array."""
+    pre-audit set also routed SORTBY/UNIQUE/SEQUENCE/RANDARRAY/ANCHORARRAY/
+    SINGLE through _xlws, risking the repair-only failure the spike proved
+    for a mis-prefixed dynamic array. COM-tier verification is flagged."""
     assert calc.XLFN_XLWS_FUNCS == frozenset({"FILTER", "SORT"})
     out, _ = calc.normalize_formula("=SORT(FILTER(A1:A9,B1:B9>0))")
     assert out == "=_xlfn._xlws.SORT(_xlfn._xlws.FILTER(A1:A9,B1:B9>0))"
@@ -111,7 +111,7 @@ def test_formatted_but_empty_cells_not_value_bearing():
     assert locate.true_used_range(ws) == (1, 1, 1, 1)
 
 
-# --------------------------------------------------- locate edge cases
+# --------------------------------------------------- locate re-audit fixes
 
 
 def test_used_range_honors_sibling_sheet_key():

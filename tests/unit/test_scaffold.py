@@ -1,8 +1,11 @@
-"""Scaffold checks: the package imports, the server lists cleanly over an
-in-process fastmcp Client, and the infrastructure is wired.
+"""Scaffold gates: the package imports, the server lists cleanly over
+an in-process fastmcp Client, and the shared infrastructure is wired.
 
-Covers the server import and tool-count check, the pack registry and
-envelope wiring, and the startup-mode route.
+These are the scaffold gate checks captured as tests: the server import +
+tool-count check and the envelope wiring. Family surface (2.0): the
+pack registry and the startup-mode route are gone; the op-to-tool map they
+used to pin is pinned here against surface/groups.py, and the surface itself
+is covered by test_family_surface.py.
 """
 
 from __future__ import annotations
@@ -11,17 +14,17 @@ import asyncio
 
 from fastmcp import Client
 
-from xlsx_mcp import envelope, packs, server
+from xlsx_mcp import envelope, registry, server
 from xlsx_mcp.core.errors import (
     CalcUnavailable,
     HazardRefused,
     WorkbookLocked,
-    XlMcpError,
 )
+from xlsx_mcp.surface.groups import OP_GROUP
 
 
-# The core data plane, all lite (the daily driver).
-CORE_LITE = {
+# The core data plane (the daily driver).
+PHASE_3A = {
     "create_workbook", "copy_workbook", "get_workbook_metadata",
     "diagnose_workbook", "manage_worksheet",
     "read_range", "set_cell", "write_range", "clear_range",
@@ -29,67 +32,47 @@ CORE_LITE = {
     "get_grid_view", "apply_edits",
     "format_cells", "set_dimensions",
 }
-BASE_LITE = {"enable_tools", "disable_tools", "get_server_info"}
 
 
 def test_imports_and_lists_over_client():
-    """The server imports and lists its tools via an in-process fastmcp
-    Client. Surface: the tiered-loading toggles, get_server_info, and
-    the core data-plane families (all lite)."""
+    """The server imports and lists the fixed family tools via an
+    in-process fastmcp Client; every core data-plane op is on the surface."""
 
     async def run():
-        async with Client(server.mcp) as c:
-            return {t.name for t in await c.list_tools()}
+        async with Client(server.create_server()) as c:
+            tools = await c.list_tools()
+            return {t.name: t.inputSchema["properties"].get("op", {}).get("enum", [])
+                    for t in tools}
 
-    names = asyncio.run(run())
-    assert BASE_LITE <= names
-    assert CORE_LITE <= names
-
-
-def test_all_tools_are_packed():
-    """Every registered tool lands in the packs registry (no unpacked
-    strays); the core data plane is all lite."""
-    listed = {t.name for t in asyncio.run(server.mcp.list_tools())}
-    packed = {n for members in packs.tool_names().values() for n in members}
-    assert listed <= packed, f"unpacked tools: {sorted(listed - packed)}"
-    lite = set(packs.tool_names()["lite"])
-    assert (BASE_LITE | CORE_LITE) <= lite
-    # The current pack layout: the four small planning
-    # packs merged into two. format+objects+tables-names -> design (the
-    # report-design usage cluster); data -> io (the read-side inspector
-    # cluster). Every pack clears the 1.5k cost line with no exceptions.
-    members = packs.tool_names()
-    assert set(members.get("design", [])) == {
-        "manage_conditional_format", "manage_data_validation",
-        "apply_style", "copy_format", "audit_styles",
-        "manage_image", "manage_chart", "manage_table", "manage_name"}
-    assert set(members.get("io", [])) == {
-        "manage_comment", "set_protection", "set_page_layout",
-        "set_header_footer", "get_external_links", "inspect_vba",
-        "export_file", "get_pivot", "get_connections"}
-    # The COM tier. com_run_macro is DELIBERATELY absent: macro
-    # execution is not provided (VBA is preserve/inspect only).
-    assert set(members.get("com", [])) == {
-        "recalculate", "com_manage_pivot", "com_export_pdf",
-        "com_render_sheet", "com_convert_format", "com_save_with_password",
-        "com_autofit", "com_goal_seek", "com_set_sparkline",
-        "com_validate_opens_clean", "com_status"}
-    assert "com_run_macro" not in packed
-    # Tables, sort/filter, hyperlinks and import/export.
-    for name in ("create_table", "get_table", "sort_range", "set_filter",
-                 "clear_filter", "manage_hyperlink", "import_data",
-                 "export_range"):
-        assert name in lite
-    # Structural edits, merges, find/replace and scatter cells.
-    for name in ("modify_grid_structure", "set_merge", "find_cells",
-                 "replace_cells", "get_cells", "set_cells"):
-        assert name in lite
+    listed = asyncio.run(run())
+    assert "xl_help" in listed and "get_server_info" in listed["xl_read"]
+    ops = {op for members in listed.values() for op in members}
+    assert PHASE_3A <= ops
 
 
-def test_pack_map_is_the_recut_surface():
-    """The pack map is the current layout: three packs, every
-    one over the 1.5k cost line (com env-gated regardless of size)."""
-    assert set(packs.pack_names()) == {"design", "io", "com"}
+def test_every_op_has_a_tool():
+    """Every registered op sits on one family tool (no strays); the former
+    design/io/com pack members land on the family tool that owns them."""
+    ops = set(registry.public_ops())
+    assert ops == set(OP_GROUP), sorted(ops ^ set(OP_GROUP))
+    design = {"manage_conditional_format", "manage_data_validation",
+              "apply_style", "copy_format", "audit_styles",
+              "manage_image", "manage_chart", "manage_table", "manage_name"}
+    io = {"manage_comment", "set_protection", "set_page_layout",
+          "set_header_footer", "get_external_links", "inspect_vba",
+          "export_file", "get_pivot", "get_connections"}
+    com = {"recalculate", "com_manage_pivot", "com_export_pdf",
+           "com_render_sheet", "com_convert_format", "com_save_with_password",
+           "com_autofit", "com_goal_seek", "com_set_sparkline",
+           "com_validate_opens_clean", "com_status"}
+    assert (design | io | com) <= ops
+    # com_status is a read; every other former com-pack member drives the
+    # private hidden Excel from xl_app.
+    assert {OP_GROUP[n] for n in com - {"com_status"}} == {"xl_app"}
+    assert OP_GROUP["com_status"] == "xl_read"
+    # com_run_macro is DELIBERATELY absent: macro execution is deferred from
+    # v1 (VBA is preserve/inspect only).
+    assert "com_run_macro" not in ops
 
 
 def test_grid_error_codes_present():
@@ -104,22 +87,11 @@ def test_grid_error_codes_present():
 
 
 def test_refusal_shape_and_iserror():
-    """A typed exception becomes the {ok: false, error: {...}} refusal with
-    isError=true and stays indexable like the dict."""
-    r = envelope.refuse(HazardRefused("slicers would be lost"))
-    assert r.is_error is True
-    assert r["ok"] is False
-    assert r["error"]["code"] == "HAZARD_REFUSED"
-    assert r["error"]["hint"]  # a HAZARD_REFUSED hint is populated
-
-
-def test_startup_mode_default_is_lite(monkeypatch):
-    """apply_startup_mode with no env is lite; a typo fails loudly."""
-    monkeypatch.delenv("KS4XL_MODE", raising=False)
-    assert packs.apply_startup_mode() == "lite"
-    monkeypatch.setenv("KS4XL_MODE", "not-a-pack")
-    try:
-        packs.apply_startup_mode()
-        assert False, "a bogus KS4XL_MODE should raise"
-    except XlMcpError:
-        pass
+    """A typed exception becomes the {ok: false, error: {...}} refusal, sent
+    once with isError=true."""
+    payload = envelope.refusal(HazardRefused("slicers would be lost"))
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "HAZARD_REFUSED"
+    assert payload["error"]["hint"]  # a HAZARD_REFUSED hint is populated
+    r = envelope.tool_result(payload, is_error=True)
+    assert r.is_error is True and r.structured_content is None

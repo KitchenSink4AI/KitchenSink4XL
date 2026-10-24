@@ -57,6 +57,70 @@ SHEET_OPTIONS: dict[str, str] = {
 }
 
 
+#: Which optional arguments each action reads (an argument
+#: the chosen action would ignore is refused rather than dropped silently).
+_ACTION_ARGS = {
+    "sheet": {"sheet", "password", "options", "unlock_ranges"},
+    "workbook": {"password"},
+    "unlock": {"sheet", "unlock_ranges"},
+    "remove": {"sheet"},
+    "status": set(),
+}
+
+#: The most unlocked ranges status lists per sheet.
+_MAX_UNLOCKED_LISTED = 50
+
+
+def _unlocked_ranges(ws) -> list[str]:
+    """The sheet's unlocked cells as A1 ranges: runs along each row, then
+    runs with the same columns on consecutive rows joined into rectangles."""
+    from openpyxl.utils import get_column_letter
+
+    cells = sorted((r, c) for (r, c), cell in ws._cells.items()
+                   if cell.has_style and not cell.protection.locked)
+    runs: dict[int, list[tuple[int, int]]] = {}
+    for r, c in cells:
+        row = runs.setdefault(r, [])
+        if row and row[-1][1] == c - 1:
+            row[-1] = (row[-1][0], c)
+        else:
+            row.append((c, c))
+    rects: list[list[int]] = []  # [r0, r1, c0, c1]
+    open_: dict[tuple[int, int], list[int]] = {}
+    for r in sorted(runs):
+        nxt: dict[tuple[int, int], list[int]] = {}
+        for span in runs[r]:
+            rect = open_.get(span)
+            if rect is not None and rect[1] == r - 1:
+                rect[1] = r
+            else:
+                rect = [r, r, span[0], span[1]]
+                rects.append(rect)
+            nxt[span] = rect
+        open_ = nxt
+    out = []
+    for r0, r1, c0, c1 in rects:
+        a, b = f"{get_column_letter(c0)}{r0}", f"{get_column_letter(c1)}{r1}"
+        out.append(a if a == b else f"{a}:{b}")
+    return out
+
+
+def _mark(pkg: WorkbookPackage, ranges, sheet, locked: bool) -> list[dict]:
+    from openpyxl.styles import Protection as _CellProt
+
+    touched = []
+    for item in ranges:
+        loc = {"range": item} if isinstance(item, str) else item
+        grid = pkg.resolve(loc, default_sheet=sheet)
+        ws = pkg.workbook[grid.sheet]
+        for row in ws.iter_rows(min_row=grid.min_row, max_row=grid.max_row,
+                                min_col=grid.min_col, max_col=grid.max_col):
+            for cell in row:
+                cell.protection = _CellProt(locked=bool(locked))
+        touched.append({"sheet": grid.sheet, "range": grid.a1})
+    return touched
+
+
 def _require_sheet(pkg: WorkbookPackage, sheet: str | None):
     wb = pkg.workbook
     if sheet is None:
@@ -79,15 +143,28 @@ def set_protection(path: str, action: str, sheet: str | None = None,
     if action not in PROTECTION_ACTIONS:
         raise XlMcpError(
             f"action must be one of {PROTECTION_ACTIONS}, got {action!r}")
+    given = {name for name, value in (("sheet", sheet), ("password", password),
+                                      ("options", options),
+                                      ("unlock_ranges", unlock_ranges)) if value}
+    ignored = sorted(given - _ACTION_ARGS[action])
+    if ignored:
+        raise XlMcpError(
+            f"action '{action}' does not use {', '.join(ignored)}; it takes "
+            + (", ".join(sorted(_ACTION_ARGS[action])) or "no optional arguments")
+            + ". To protect a sheet with some cells left editable, pass unlock_ranges "
+            "with action='sheet'.")
 
     if action == "status":
         wb = gridio.open_wb(path)
         try:
             sec = wb.security
+            # A password is stored either as the legacy 16-bit hash or, as
+            # every current Excel writes it, a salted hash (hashValue).
             book = {
                 "structure_locked": bool(sec and sec.lockStructure),
                 "windows_locked": bool(sec and sec.lockWindows),
-                "has_password": bool(sec and sec.workbookPassword),
+                "has_password": bool(sec and (sec.workbookPassword
+                                              or sec.workbookHashValue)),
             }
             sheets = []
             for ws in wb.worksheets:
@@ -95,13 +172,20 @@ def set_protection(path: str, action: str, sheet: str | None = None,
                 blocked = {
                     opt: bool(getattr(prot, attr, False))
                     for opt, attr in SHEET_OPTIONS.items()}
-                sheets.append({
+                unlocked = _unlocked_ranges(ws)
+                entry = {
                     "sheet": ws.title,
                     "protected": bool(prot.sheet),
-                    "has_password": bool(prot.password),
+                    "has_password": bool(prot.password
+                                         or getattr(prot, "hashValue", None)),
                     "allowed_while_protected": sorted(
                         o for o, b in blocked.items() if not b),
-                })
+                    # The cells that stay editable under protection.
+                    "unlocked_ranges": unlocked[:_MAX_UNLOCKED_LISTED],
+                }
+                if len(unlocked) > _MAX_UNLOCKED_LISTED:
+                    entry["unlocked_ranges_total"] = len(unlocked)
+                sheets.append(entry)
             return {"workbook": book, "sheets": sheets}
         finally:
             wb.close()
@@ -123,17 +207,26 @@ def set_protection(path: str, action: str, sheet: str | None = None,
         # response said allowed:[format_cells] while status still allowed sort
         # and auto_filter, contradicting this module's own "unlisted options
         # keep Excel's defaults" contract.
-        prot = SheetProtection(sheet=True)
+        # Excel's own defaults: Protect Sheet blocks objects and
+        # scenarios unless allowed. openpyxl's defaults left both open, so
+        # comments, images and charts stayed editable on a "protected" sheet,
+        # against this module's own contract.
+        prot = SheetProtection(sheet=True, objects=True, scenarios=True)
         ws.protection = prot
         for opt, allowed in opts.items():
             # file semantics: TRUE blocks; user semantics: TRUE allows
             setattr(prot, SHEET_OPTIONS[opt], not bool(allowed))
         if password:
             prot.password = password  # legacy ECMA-376 hash via openpyxl
+        # unlock_ranges with action='sheet' were dropped
+        # silently; they are the cells the protection leaves editable.
+        unlocked = _mark(pkg, unlock_ranges, ws.title, False) if unlock_ranges else []
         pkg._changed["protection"] = {
             "sheet": ws.title, "protected": True,
             "allowed": sorted(o for o, a in opts.items() if a),
             "password": bool(password)}
+        if unlocked:
+            pkg._changed["protection"]["cells_unlocked"] = unlocked
     elif action == "workbook":
         from openpyxl.workbook.protection import WorkbookProtection
         sec = pkg.workbook.security or WorkbookProtection()
@@ -150,19 +243,7 @@ def set_protection(path: str, action: str, sheet: str | None = None,
             raise XlMcpError(
                 "unlock needs unlock_ranges (a list of location objects or "
                 "A1 range strings to mark unlocked)")
-        from openpyxl.styles import Protection as _CellProt
-        touched = []
-        for item in unlock_ranges:
-            loc = {"range": item} if isinstance(item, str) else item
-            grid = pkg.resolve(loc, default_sheet=sheet)
-            ws = pkg.workbook[grid.sheet]
-            for row in ws.iter_rows(min_row=grid.min_row,
-                                    max_row=grid.max_row,
-                                    min_col=grid.min_col,
-                                    max_col=grid.max_col):
-                for cell in row:
-                    cell.protection = _CellProt(locked=bool(locked))
-            touched.append({"sheet": grid.sheet, "range": grid.a1})
+        touched = _mark(pkg, unlock_ranges, sheet, locked)
         pkg._changed["protection"] = {
             "cells_locked" if locked else "cells_unlocked": touched}
     else:  # remove

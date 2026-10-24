@@ -18,7 +18,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from xlsx_mcp.core import hazard
 
-CORPUS = ROOT / "tests" / "fixtures" / "samples"
+CORPUS = ROOT / "tests" / "fixtures" / "workbooks"
 
 
 def test_clean_workbook_routes_to_openpyxl():
@@ -70,7 +70,7 @@ def test_charts_and_pivots_degrade_not_drop():
 @pytest.mark.skipif(not (CORPUS / "chart.xlsx").exists(),
                     reason="corpus not built")
 def test_chart_only_drawing_is_not_shape_loss():
-    """A workbook whose ONLY drawing is a chart anchor
+    """Over-refusal fix: a workbook whose ONLY drawing is a chart anchor
     must NOT be flagged as SEV_DROPS shape loss. The chart part survives an
     openpyxl round-trip (charts degrade, they do not drop), and the chart's
     anchor drawing round-trips with it; only genuine shapes are lost."""
@@ -235,7 +235,7 @@ def test_fidelity_harness_zero_false_negatives():
 
 @pytest.mark.skipif(not CORPUS.exists(), reason="corpus not built")
 def test_fidelity_harness_confirms_known_drops():
-    """Empirical check: slicers and shapes are DROPPED by
+    """The research claims, now empirical: slicers and shapes are DROPPED by
     openpyxl and the scan flags them; clean fixtures stay clean."""
     from fidelity_harness import run_corpus
 
@@ -361,7 +361,7 @@ def test_legacy_comment_parts_are_not_a_loss():
     them xl/comments1.xml and vmlDrawing1.vml, openpyxl rewrites them as
     xl/comments/comment1.xml and commentsDrawing1.vml. Both notes, both
     authors and both note-box sizes survive (measured). Flagging this is
-    the exact regression this guards."""
+    the exact regression a past fix addressed."""
     vml = (b'<xml xmlns:v="urn:schemas-microsoft-com:vml" '
            b'xmlns:x="urn:schemas-microsoft-com:office:excel">'
            b'<v:shape type="#_x0000_t202"><x:ClientData ObjectType="Note">'

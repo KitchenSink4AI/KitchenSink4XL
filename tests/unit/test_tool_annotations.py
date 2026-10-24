@@ -31,14 +31,13 @@ from pathlib import Path
 
 import pytest
 
-from xlsx_mcp import packs, server  # noqa: F401  (the import registers tools)
+from xlsx_mcp import registry, server  # noqa: F401  (the import registers ops)
 from xlsx_mcp.core import tool_annotations as ann
+from xlsx_mcp.surface import copy, groups
 
 DOCS = Path(__file__).resolve().parents[2] / "docs"
 
-#: Words a tool title must not carry. The checklist rejects tool metadata
-#: that promotes a product, and a title is the most visible metadata there
-#: is.
+#: Words a tool title must not carry.
 MARKETING = {
     "best", "powerful", "easy", "easiest", "fast", "fastest", "pro",
     "premium", "ultimate", "smart", "magic", "magical", "free", "awesome",
@@ -47,74 +46,60 @@ MARKETING = {
     "kitchensink4ppt", "kitchensink4web",
 }
 
-
-def _wire(tool) -> dict:
-    return tool.to_mcp_tool().model_dump(exclude_none=True)
-
-
-def _registered() -> dict:
-    """tool name -> tool object, every pack, enabled or not."""
-    out: dict = {}
-    for tools in packs._REGISTRY.values():
-        out.update(tools)
-    return out
+# FAMILY SURFACE: the wire now carries seven tools whose titles are copy
+# (surface/copy.py TOOLS); each op keeps its classification here, and the
+# tool's annotations are computed from its ops (test_family_surface.py
+# test_tool_list_shape_and_annotations). The per-op title table stays the
+# module's record of each operation's name and is checked against the docs.
 
 
-def test_every_registered_tool_carries_a_non_empty_title():
-    missing = [name for name, tool in sorted(_registered().items())
-               if not _wire(tool).get("title")]
-    assert not missing, (
-        f"these tools reach tools/list with no title: {missing}")
+def _ops() -> dict:
+    """op name -> OpSpec for every engine function."""
+    return dict(registry.public_ops())
+
+
+def _wire_titles() -> dict:
+    return {name: copy.TOOLS[name]["title"] for name in groups.TOOL_NAMES}
+
+
+def test_every_surface_tool_carries_a_non_empty_title():
+    missing = [n for n, t in _wire_titles().items() if not t.strip()]
+    assert not missing, missing
 
 
 def test_titles_are_unique_within_this_server():
-    seen: dict = {}
-    clashes = []
-    for name, tool in sorted(_registered().items()):
-        title = _wire(tool)["title"]
-        if title in seen:
-            clashes.append(f"{title!r}: {seen[title]} and {name}")
-        seen[title] = name
-    assert not clashes, (
-        "two tools would show the same name in a client: " + "; ".join(clashes))
+    titles = list(_wire_titles().values())
+    assert len(titles) == len(set(titles))
 
 
-def test_no_title_is_longer_than_forty_characters():
-    long = {name: _wire(tool)["title"]
-            for name, tool in _registered().items()
-            if len(_wire(tool)["title"]) > 40}
+def test_no_filled_title_is_longer_than_forty_characters():
+    """An unfilled title is a COPY_SLOT placeholder, which the owner-test
+    ship gate refuses to build; a filled one must fit."""
+    long = {n: t for n, t in _wire_titles().items()
+            if copy.SLOT not in t and len(t) > 40}
     assert not long, f"titles over 40 characters: {long}"
 
 
 def test_no_title_carries_marketing_language():
     offenders = {}
-    for name, tool in _registered().items():
-        words = set(re.findall(r"[a-z0-9]+", _wire(tool)["title"].lower()))
-        hit = words & MARKETING
+    for name, title in _wire_titles().items():
+        if copy.SLOT in title:
+            continue
+        hit = set(re.findall(r"[a-z0-9]+", title.lower())) & MARKETING
         if hit:
             offenders[name] = sorted(hit)
-    assert not offenders, (
-        f"a tool title is not a place to sell anything: {offenders}")
+    assert not offenders, offenders
 
 
-def test_the_title_table_covers_the_registered_surface_exactly():
-    registered = set(_registered())
-    assert registered - set(ann.TITLES) == set(), (
-        "tools with no title (add them to tool_annotations.py): "
-        f"{sorted(registered - set(ann.TITLES))}")
-    assert set(ann.TITLES) - registered == set(), (
-        "tool_annotations.py titles tools that no longer exist: "
-        f"{sorted(set(ann.TITLES) - registered)}")
+def test_the_title_table_covers_every_operation_exactly():
+    ops = set(_ops())
+    assert ops - set(ann.TITLES) == set(), sorted(ops - set(ann.TITLES))
+    assert set(ann.TITLES) - ops == set(), sorted(set(ann.TITLES) - ops)
 
 
 def test_an_untitled_name_raises_rather_than_getting_a_generated_title():
     with pytest.raises(RuntimeError):
         ann.title("a_tool_that_does_not_exist")
-
-
-def test_the_wire_title_is_the_one_the_module_declares():
-    for name, tool in sorted(_registered().items()):
-        assert _wire(tool)["title"] == ann.TITLES[name], name
 
 
 def _doc_rows(filename: str) -> list:
@@ -144,89 +129,45 @@ def test_the_published_title_table_matches_the_module():
 #: replacing, or changes no user data at all.
 NON_DESTRUCTIVE_TOOLS = {
     "com_validate_opens_clean", "copy_workbook", "create_table",
-    "create_workbook", "disable_tools", "enable_tools"
+    "create_workbook",
+    # the update ops change the server program or its notice setting,
+    # never a workbook (core/update_flow.py)
+    "update_notices", "update_now",
 }
 
 
-def test_every_mutating_tool_carries_a_destructive_hint():
-    missing = []
-    for name, tool in sorted(_registered().items()):
-        annotations = getattr(tool, "annotations", None)
-        if annotations is None:
-            missing.append(name)
-            continue
-        if (annotations.readOnlyHint is False
-                and annotations.destructiveHint is None):
-            missing.append(name)
-    assert not missing, (
-        f"these tools can change something and say nothing about whether "
-        f"the change is destructive: {missing}")
-
-
-def test_no_read_only_tool_claims_a_destructive_hint():
-    """The field is meaningful only when readOnlyHint is false. A value on
-    a read-only tool is noise a reviewer has to interpret."""
-    noisy = [name for name, tool in _registered().items()
-             if tool.annotations.readOnlyHint is True
-             and tool.annotations.destructiveHint is not None]
-    assert not noisy, noisy
+def test_every_mutating_op_carries_a_destructive_classification():
+    missing = [n for n, spec in sorted(_ops().items())
+               if not spec.read_only and ann.destructive_hint(n) is None]
+    assert not missing, missing
 
 
 def test_the_destructive_classification_covers_the_surface():
-    mutating = {name for name, tool in _registered().items()
-                if tool.annotations.readOnlyHint is False}
+    mutating = {n for n, spec in _ops().items() if not spec.read_only}
     classified = ann.DESTRUCTIVE | ann.NON_DESTRUCTIVE
-    assert mutating - classified == set(), (
-        "unclassified tools (add them to tool_annotations.py): "
-        f"{sorted(mutating - classified)}")
-    assert classified - mutating == set(), (
-        "tool_annotations.py classifies tools that are read-only or gone: "
-        f"{sorted(classified - mutating)}")
+    assert mutating - classified == set(), sorted(mutating - classified)
+    assert classified - mutating == set(), sorted(classified - mutating)
     assert not (ann.DESTRUCTIVE & ann.NON_DESTRUCTIVE)
 
 
 def test_the_non_destructive_set_matches_the_hand_audited_allowlist():
-    on_the_wire = {
-        name for name, tool in _registered().items()
-        if tool.annotations.destructiveHint is False
-    }
-    assert on_the_wire == NON_DESTRUCTIVE_TOOLS, (
+    assert ann.NON_DESTRUCTIVE == NON_DESTRUCTIVE_TOOLS, (
         "the non-destructive set changed. Added: "
-        f"{sorted(on_the_wire - NON_DESTRUCTIVE_TOOLS)}; removed: "
-        f"{sorted(NON_DESTRUCTIVE_TOOLS - on_the_wire)}. Classify the tool "
-        "by reading its implementation against the rule in "
-        "docs/TOOL_ANNOTATIONS.md, then update BOTH this allowlist and "
-        "tool_annotations.py.")
+        f"{sorted(ann.NON_DESTRUCTIVE - NON_DESTRUCTIVE_TOOLS)}; removed: "
+        f"{sorted(NON_DESTRUCTIVE_TOOLS - ann.NON_DESTRUCTIVE)}.")
+
+
+def test_the_op_destructive_flag_is_the_module_classification():
+    for n, spec in _ops().items():
+        if spec.read_only:
+            assert spec.destructive is False, n
+        else:
+            assert spec.destructive is bool(ann.destructive_hint(n)), n
 
 
 def test_an_unclassified_mutating_tool_raises_at_registration():
-    try:
+    with pytest.raises(RuntimeError):
         ann.annotations("a_tool_that_does_not_exist", read_only=False)
-    except RuntimeError:
-        return
-    raise AssertionError(
-        "an unclassified mutating tool must refuse to register rather than "
-        "defaulting: defaulting to false is a false safety claim and "
-        "defaulting to true is a lie about a read.")
-
-
-def test_open_world_hint_is_declared_on_every_tool():
-    missing = [name for name, tool in _registered().items()
-               if tool.annotations.openWorldHint is None]
-    assert not missing, missing
-
-
-def test_nothing_in_this_server_claims_an_open_world():
-    """No tool here reaches a remote service, so none may say it does."""
-    for name, tool in _registered().items():
-        assert tool.annotations.openWorldHint is False, name
-
-
-def test_idempotent_hint_is_true_or_absent_never_false():
-    for name, tool in _registered().items():
-        hint = tool.annotations.idempotentHint
-        assert hint in (True, None), (name, hint)
-        assert (hint is True) == (name in ann.IDEMPOTENT), name
 
 
 def test_the_published_annotation_tables_match_the_module():

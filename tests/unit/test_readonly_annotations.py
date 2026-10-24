@@ -28,7 +28,7 @@ from pathlib import Path
 
 import pytest
 
-from xlsx_mcp import packs, server  # noqa: F401  (the import registers tools)
+from xlsx_mcp import registry, server  # noqa: F401  (the import registers ops)
 from xlsx_mcp.core import readonly
 
 PACKAGE = Path(readonly.__file__).parent.parent
@@ -73,10 +73,13 @@ MUTATION_MARKERS = [
 
 #: Modules the walk stops at. Each is infrastructure a read can
 #: legitimately reach: xproc.py and serial.py are the cross-process and in-process locks,
-#: dialogs.py reads the OS window layer, and update_check.py reads the
-#: cached update line.
+#: dialogs.py reads the OS window layer, update_check.py reads the cached
+#: update line, and update_flow.py holds the update notice and the update the
+#: user chooses: it runs from the surface hook and from update_now, never from
+#: a read op's own path (its generic names, start and finish, would otherwise
+#: become call-graph edges to unrelated functions of the same name).
 LEAF_MODULES = {"xproc.py", "serial.py", "dialogs.py",
-                "update_check.py"}
+                "update_check.py", "update_flow.py"}
 LEAF_FUNCTIONS = {"_screen_repair_async"}
 
 _MARKER_RE = re.compile("|".join(MUTATION_MARKERS))
@@ -145,21 +148,20 @@ def _reaches_mutation(index, name, seen=None, depth=0, trail=""):
 
 
 def _registered() -> dict:
-    """tool name -> tool object, every pack, enabled or not."""
-    out = {}
-    for tools in packs._REGISTRY.values():
-        out.update(tools)
-    return out
+    """op name -> OpSpec, every op of the family surface. Family surface:
+    the read-only classification now decides which TOOL an op may sit on
+    (xl_read, the one tool carrying readOnlyHint=true, holds only read-only
+    ops; test_family_surface.py pins the tool annotations)."""
+    return registry.public_ops()
 
 
 def test_every_registered_tool_carries_an_explicit_hint():
     missing = []
-    for name, tool in sorted(_registered().items()):
-        annotations = getattr(tool, "annotations", None)
-        if annotations is None or annotations.readOnlyHint is None:
+    for name, spec in sorted(_registered().items()):
+        if not isinstance(spec.read_only, bool):
             missing.append(name)
     assert not missing, (
-        f"these tools reach tools/list with no readOnlyHint: {missing}")
+        f"these ops reach the surface with no read-only classification: {missing}")
 
 
 def test_the_classification_covers_the_whole_surface():
@@ -176,8 +178,7 @@ def test_the_classification_covers_the_whole_surface():
 
 def test_read_only_set_matches_the_hand_audited_allowlist():
     on_the_wire = {
-        name for name, tool in _registered().items()
-        if tool.annotations.readOnlyHint is True
+        name for name, spec in _registered().items() if spec.read_only is True
     }
     assert on_the_wire == READ_ONLY_TOOLS, (
         "the read-only group changed. Added: "
@@ -212,5 +213,8 @@ def test_an_unclassified_tool_raises_rather_than_defaulting():
 
 
 def test_the_hint_matches_the_module_for_every_tool():
-    for name, tool in _registered().items():
-        assert tool.annotations.readOnlyHint is readonly.read_only_hint(name)
+    from xlsx_mcp.surface.groups import OP_GROUP, READ_ONLY_GROUPS
+    for name, spec in _registered().items():
+        assert spec.read_only is readonly.read_only_hint(name)
+        # ...and the op sits on a read-only tool exactly when it is read-only.
+        assert (OP_GROUP[name] in READ_ONLY_GROUPS) is spec.read_only, name

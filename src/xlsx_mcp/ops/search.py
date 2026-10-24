@@ -2,7 +2,7 @@
 scoped search over values and formulas.
 
 find_cells is the list-every-hit reader (the search LOCATION selector picks
-exactly one cell and refuses on ambiguity; this tool is its plural form:
+exactly one cell and refuses on ambiguity; this tool is its plural sibling:
 it returns every match with an unambiguous address, paginated). Matching runs
 over cached values for value cells (a formula cell's searchable value is its
 last calculated one, per the honest calc story) and over formula strings when
@@ -106,7 +106,8 @@ def find_cells(path: str, query: str, look_in: str = "values",
                sheet: str | None = None, location: Any = None,
                limit: int = 100, offset: int = 0) -> dict:
     """Search cell values and/or formulas across a workbook, sheet, or range.
-    Returns every match with its unambiguous address, paginated. Read-only."""
+    Returns every match with its unambiguous address, paginated; a value
+    whose text in Excel differs carries it in shows. Read-only."""
     _validate_scope(look_in, match, query)
     if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
         raise XlMcpError("limit must be an integer >= 1")
@@ -116,6 +117,9 @@ def find_cells(path: str, query: str, look_in: str = "values",
         if look_in in ("values", "both") else None
     try:
         hits: list[dict] = []
+        differs = gridio.ShownText(path, gridio.is_1904(formula_wb.worksheets[0]),
+                                   every=True)
+        shown_at: list[tuple[dict, str, int, int]] = []
         for title, r, c, formula, val in _iter_scope(
                 formula_wb, sheet, location):
             cws = cached_wb[title] if cached_wb is not None else None
@@ -127,8 +131,12 @@ def find_cells(path: str, query: str, look_in: str = "values",
                 if value is not None and pred(str(value)):
                     hit_in = "value"
                     display = value
+            # Formulas are searched and shown in the form
+            # read_range returns and Excel's formula bar shows (=XLOOKUP, not
+            # =_xlfn.XLOOKUP); the stored text still matches too.
+            shown = _calc.denormalize_formula(formula) if formula is not None else None
             if hit_in is None and look_in in ("formulas", "both") \
-                    and formula is not None and pred(formula):
+                    and formula is not None and (pred(shown) or pred(formula)):
                 hit_in = "formula"
             if hit_in is None:
                 continue
@@ -136,18 +144,42 @@ def find_cells(path: str, query: str, look_in: str = "values",
                 "sheet": title, "cell": gridio.a1(r, c), "match_in": hit_in}
             if display is not None:
                 entry["value"] = _clip(str(gridio.compact_value(display)))
+                shown_at.append((entry, title, r, c))
             if formula is not None:
-                entry["formula"] = _clip(formula)
+                entry["formula"] = _clip(shown)
+                if shown != formula:
+                    entry["formula_stored"] = _clip(formula)
             hits.append(entry)
         total = len(hits)
         page = hits[max(0, int(offset)):]
         truncated = len(page) > limit
-        return {
+        returned = page[:limit]
+        # The text Excel shows, beside each returned value that differs.
+        on_page = {id(e) for e in returned}
+        for entry, title, r, c in shown_at:
+            if id(entry) in on_page:
+                value = cached_wb[title].cell(r, c).value
+                differs.add(title, r, c, value, formula_wb[title].cell(r, c).number_format)
+        for entry, title, r, c in shown_at:
+            if id(entry) in on_page:
+                text = differs.text_for(title, r, c)
+                if text is not None:
+                    entry["shows"] = _clip(text)
+        result = {
             "query": query, "match": match, "look_in": look_in,
             "total": total, "returned": min(len(page), limit),
             "offset": int(offset), "truncated": truncated,
-            "matches": page[:limit],
+            "matches": returned,
         }
+        if truncated:
+            result["next_offset"] = int(offset) + min(len(page), limit)
+        # A value matched (or missed) against a cached formula
+        # result that a recalculation-on-open is still owed says so.
+        if cached_wb is not None:
+            pending = gridio.pending_recalc_note(path)
+            if pending:
+                result["cached_note"] = pending
+        return result
     finally:
         formula_wb.close()
         if cached_wb is not None:
@@ -210,9 +242,8 @@ def replace_cells(path: str, find: str, replace: str,
                              # back as a plain string STRIPS t="array" ref=,
                              # and Excel then resolves the de-arrayed formula
                              # with implicit intersection: SUM(A1:A5*2) read
-                             # 30 before and 2 after, clean open, no warning
-                             # The array-ness travels
-                             # with the plan entry.
+                             # 30 before and 2 after, clean open, no warning.
+                             # The array-ness travels with the plan entry.
                              "array": _arrays.array_formula_of_value(
                                  pkg.workbook[title][gridio.a1(r, c)].value)
                              is not None})

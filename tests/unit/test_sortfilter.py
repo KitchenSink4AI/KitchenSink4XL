@@ -72,7 +72,7 @@ def test_set_filter_hides_nonmatching(book):
     r = sf.set_filter(str(book), {"range": "A1:B4"},
                       criteria=[{"column": "Score", "op": "ge", "value": 20}])
     assert r["ok"] and r["verified"]
-    assert r["changed"]["filter"]["rows_shown"] == 2
+    assert r["changed"]["filter"]["data_rows_visible"] == 2
     wb = openpyxl.load_workbook(book)
     # row with Score 10 (row 3, 'a') is hidden; 30 and 20 visible
     assert wb["S"].row_dimensions[3].hidden is True

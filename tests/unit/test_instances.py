@@ -1,7 +1,8 @@
 """Unit tests for com/instances.py PURE-PYTHON parts: the PID journal, the
 manager's import-clean construction, and PID enumeration shape. The live COM
 behavior (multi-instance, isolation, self-exclusion, file lock, pooling,
-zombie reclaim) needs a live Excel and is not covered here.
+zombie reclaim) is proven by tests/com_gates/instances_gate.py with Excel
+closed and PID-precise accounting.
 """
 
 from __future__ import annotations
@@ -54,8 +55,8 @@ def test_owned_pids_unions_workers_and_journal(tmp_path):
 
 
 def test_failed_taskkill_keeps_journal_record(tmp_path, monkeypatch):
-    """sweep/force_reclaim must not journal.forget a PID when taskkill
-    FAILED, which would orphan a live owned zombie forever. A failed
+    """Re-audit fix: sweep/force_reclaim used to journal.forget a PID even
+    when taskkill FAILED, orphaning a live owned zombie forever. A failed
     kill must keep its record so the next sweep can retry."""
     from xlsx_mcp.com import instances as inst
 

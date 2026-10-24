@@ -7,7 +7,7 @@ this server used to gate its formula handling on
 ``isinstance(val, str) and val.startswith("=")``, so the object fell straight
 through and was re-placed at a new address STILL CARRYING ITS ORIGINAL ANCHOR.
 
-That has a real cost, and Excel's own behavior, verified directly, is:
+The COM ground truth shows what that costs and what Excel itself does:
 
   - ``<c r="G1"><f t="array" ref="B1:B5">A1:A5*2</f>`` (a copy whose ref was
     never translated) -- **Excel refuses to open the workbook.**
@@ -142,9 +142,9 @@ def refuse_if_touched(ws, grid, what: str) -> None:
                               grid.max_row, grid.max_col)]
     if hits:
         _refuse(f"{what} {grid.a1}", ws.title, hits,
-                "Convert the array formula(s) to values first, or edit the "
-                "workbook through the com pack, where Excel applies its own "
-                "array semantics.")
+                "Choose a range that leaves the array formula(s) out, or "
+                "convert them to values first. xl_app is not a route: none "
+                "of its ops writes a cell.")
 
 
 def refuse_if_partial(ws, grid, what: str) -> None:
@@ -159,7 +159,7 @@ def refuse_if_partial(ws, grid, what: str) -> None:
     if hits:
         _refuse(f"{what} {grid.a1}", ws.title, hits,
                 "Widen the range to cover the whole array, convert it to "
-                "values first. The com pack is not a route: none of its tools writes a cell.")
+                "values first. xl_app is not a route: none of its ops writes a cell.")
 
 
 def refuse_if_split(ws, kind: str, index: int, count: int) -> None:
@@ -190,13 +190,41 @@ def refuse_if_split(ws, kind: str, index: int, count: int) -> None:
         verb = "insert" if kind.startswith("insert") else "delete"
         _refuse(f"{verb} {count} {axis}(s) at {index}", ws.title, hits,
                 "Move the edit outside the array's span, convert the array "
-                "to values first. The com pack is not a route: none of its tools writes a cell or a row.")
+                "to values first. xl_app is not a route: none of its ops writes a cell or a row.")
+
+
+def contains_cell(a: ArrayRange, row: int, col: int) -> bool:
+    return a.min_row <= row <= a.max_row and a.min_col <= col <= a.max_col
+
+
+def cell_count(a: ArrayRange) -> int:
+    return (a.max_row - a.min_row + 1) * (a.max_col - a.min_col + 1)
+
+
+def refuse_partial_writes(sheet: str, partial: list[tuple[ArrayRange, list[str]]]) -> None:
+    """Refuse a cell write that covers PART of a multi-cell array formula.
+    Excel refuses the same edit ("You can't change part
+    of an array"); openpyxl does not, and the COM verdict on 1.2.5 was a
+    silently wrong number either way: writing the anchor deleted the whole
+    array (the other cells went blank), and writing any other cell was
+    reported verified while Excel kept showing the array's own result.
+    Writing EVERY cell of the array in one call is allowed: the array is
+    replaced by the plain values written, which is what the caller sees."""
+    hits = [a for a, _cells in partial]
+    written = sorted({c for _a, cells in partial for c in cells})
+    shown = ", ".join(written[:5]) + (f" (+{len(written) - 5} more)" if len(written) > 5 else "")
+    refs = ", ".join(h.ref for h in hits[:5])
+    _refuse(f"write {shown}", sheet, hits,
+            f"Write every cell of {refs} in one call (write_range or set_cells over "
+            "the whole range replaces the array with the values written), or change "
+            "the array formula in Excel itself. xl_app is not a route: none of its "
+            "ops writes a cell.")
 
 
 def rebase(af, dr: int, dc: int, offset_formula):
     """A copy of an ArrayFormula translated by (dr, dc): the ``ref`` anchor
     rebased AND the formula text offset, which is exactly what Excel stores
-    for a copied array (verified against Excel: A1:B5 copied to F1 becomes
+    for a copied array (COM ground truth: A1:B5 copied to F1 becomes
     ``ref="G1:G5"`` with text ``F1:F5*2``). ``offset_formula`` is
     core.refs.offset_formula, passed in to keep this module import-light."""
     from openpyxl.utils import get_column_letter
@@ -231,5 +259,6 @@ __all__ = [
     "ArrayRange", "array_ranges", "array_formula_of",
     "array_formula_of_value", "rebase", "retext",
     "refuse_if_touched", "refuse_if_partial", "refuse_if_split",
+    "refuse_partial_writes", "contains_cell", "cell_count",
     "ROW_KINDS", "COL_KINDS",
 ]

@@ -1,11 +1,10 @@
-"""`python -m xlsx_mcp` starts the same server the console scripts start.
+"""`python -m xlsx_mcp` does not start the server in 2.0.
 
-The distribution is `kitchensink4xl` and the package is `xlsx_mcp`, so the
-module name a person guesses first is the wrong one either way. `xl-mcp` and
-`kitchensink4xl` both resolve to `xlsx_mcp.server:main`, and so does this;
-`python -m xlsx_mcp.server` keeps working as it always has.
-
-README and docs/llms.txt name both routes.
+`xlsx_mcp` is the shared editing core. It carries no license policy, so
+running it stops with a message that names the launcher. The server starts
+from the `kitchensink4xl` or `xl-mcp` command, or from
+`python -m ks4xl_community_launch`; `python -m xlsx_mcp.server` stops the
+same way.
 """
 
 from __future__ import annotations

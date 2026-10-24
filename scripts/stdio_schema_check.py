@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import pathlib
 import subprocess
 import sys
 
@@ -48,9 +49,24 @@ def main() -> int:
     mode = "full"
     if "--mode" in sys.argv:
         mode = sys.argv[sys.argv.index("--mode") + 1]
-    env = dict(os.environ, KS4XL_MODE=mode, PYTHONIOENCODING="utf-8")
+    # The Community launcher is what starts an installed edition after the
+    # licensing split; the bare core does not run without an injected policy.
+    here = pathlib.Path(__file__).resolve().parent
+    sys.path.insert(0, str(here))
+    import adapter_source
+    launch_path = os.pathsep.join([
+        str(here.parent / "packages" / "kitchensink4xl-community" / "src"),
+        str(here.parent / "src"),
+        *adapter_source.import_paths(),
+    ])
+    # 2.0 has one surface; --mode is accepted and ignored, and any old
+    # setting in the caller's environment is dropped so it cannot interfere.
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("KS4XL_MODE", "KS4XL_PACK_POLICY")}
+    env.update(PYTHONIOENCODING="utf-8", PYTHONPATH=launch_path)
+    del mode
     proc = subprocess.Popen(
-        [sys.executable, "-X", "utf8", "-m", "xlsx_mcp"],
+        [sys.executable, "-X", "utf8", "-m", "ks4xl_community_launch"],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL, text=True, encoding="utf-8", env=env)
     try:

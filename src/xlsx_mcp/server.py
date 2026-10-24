@@ -1,6 +1,6 @@
 """kitchensink4xl: the consolidated FastMCP surface.
 
-The infrastructure (envelope, packs, boundary wrapper,
+The surface: the infrastructure (envelope, op registry, dispatcher,
 tiered loading, the KS4XL_MODE startup route) plus the file-tier domain
 families over the core engine (core/package, hazard, verify, locate, refs,
 calc): lifecycle and discovery, cells and ranges with the token-shaped
@@ -9,12 +9,12 @@ reference rewriting (modify_grid_structure), merges, workbook-wide
 find/replace, scatter cell reads/writes, formatting and the style layer
 (named styles, format painter, style-bloat audit), tables and names,
 conditional formatting and data validation, sort and filter, comments and
-hyperlinks, import and export, and the COM application tier.
+hyperlinks, import and export.
 
-Contract:
+Contract (carried from the family):
 - Positional tools take the grid location object, resolved
   through core.locate (ambiguity is a loud refusal carrying every match).
-- The envelope applies AT THE MCP BOUNDARY: the registered tool
+- The refusal envelope applies AT THE MCP BOUNDARY: the registered tool
   wraps the module-level function, converting typed exceptions into
   structured {ok: false, error: {...}} refusals with isError=true.
 - Every mutating tool auto-backs-up before the mutation and verifies after
@@ -24,38 +24,30 @@ Contract:
   the save refuses. It is off by default (a COM round trip, and Excel is
   not there in headless CI); KS4XL_VERIFY_COM=1 makes it the default for
   every save, and the per-call parameter wins over that either way.
-- Every tool carries a pack tag; visibility is the fastmcp 3.x route
-  (startup global transform + session-scoped toggles).
+- FAMILY SURFACE: the module-level functions are
+  OPS, not MCP tools. `_op` records each in xlsx_mcp.registry and leaves the
+  function untouched (in-process callers keep raw returns and typed
+  exceptions); create_server() builds the fixed seven-tool list from the
+  registry (xlsx_mcp.surface) and every call goes through the one
+  dispatcher. There are no packs and no runtime tool-list changes.
 """
 
 from __future__ import annotations
 
-import functools
-import inspect as _inspect
-import json as _json
 import os as _os
 import platform as _platform
 import sys as _sys
-from typing import Any
-
-from fastmcp import FastMCP
-from fastmcp.server.context import Context as _Context
-from fastmcp.server.middleware import Middleware as _FmcpMiddleware
-from fastmcp.server.transforms.visibility import Visibility as _Visibility
-from fastmcp.tools.function_tool import FunctionTool as _FunctionTool
-from fastmcp.tools.tool import ToolResult as _FmcpToolResult
+from typing import Literal
 
 from . import __version__
-from . import envelope as _envelope
-from . import packs as _packs
+from . import license_policy as _license_policy
+from . import registry as _registry
+from . import runtime as _runtime
 from .core import package as _package
-from .core import readonly as _readonly
-from .core import tool_annotations as _toolann
 from .core import schemas as _schemas
 from .core import sandbox as _sandbox
 from .core import update_check as _upd
 from .core import star_nudge as _star_nudge
-from .core.errors import XlMcpError as _XlMcpError
 from .ops import annotations as _annotations
 from .ops import backups as _backups
 from .ops import cells as _cells
@@ -81,154 +73,31 @@ from .ops import validation as _validation
 from .ops import view as _view
 from .ops import workflows as _workflows
 
-mcp = FastMCP(
-    "kitchensink4xl",
-    # Without this the MCP handshake reports fastmcp's own version as
-    # serverInfo.version, so every client log and every registry scrape
-    # carries the framework's number instead of this package's.
-    version=__version__,
-    instructions=(
-        # Self-identification, first line: an agent reading the injected
-        # instructions has to be able to say what it is talking to and what
-        # the rest of the suite is called.
-        "KitchenSink4XL (kitchensink4xl on PyPI), part of the "
-        "KitchenSink4AI suite. "
-        "Kitchen-sink Microsoft Excel (.xlsx) editor: cells and ranges, "
-        "formulas with an honest cached-value story, server-side query and "
-        "aggregation, formatting and styles, conditional formatting, data "
-        "validation, tables and named ranges, sort and filter, comments and "
-        "hyperlinks, CSV/TSV/JSON import and export. Positional tools take "
-        "one location object (cell | range | r1c1 | name | table | "
-        "used_range | region | search | anchor; an optional 'sheet' key picks "
-        "the sheet, default active), for example {\"cell\": \"B7\", \"sheet\": "
-        "\"Q3\"}, {\"range\": \"A1:C10\"} or {\"region\": {\"near\": \"B7\"}}, "
-        "with a bare 'B7' or 'A1:C10' string as shorthand; ambiguous matches "
-        "refuse loudly with every candidate. File-based with a round-trip hazard scan, "
-        "auto-backup before every mutation, and verify-after-write; a "
-        "workbook open in Excel refuses rather than risking the open copy. "
-        "Sessions start lite; enable_tools loads optional packs, including "
-        "the com pack that drives a private hidden Excel (Windows + Excel "
-        "required) for real pivot tables, fidelity recalculation, PDF "
-        "export, rendering, conversion, and encryption. "
-        # Single-sourced from packs.py so this copy and the get_workflows
-        # index note cannot drift. Clients that fix their tool list at
-        # session or worker start never see a pack enabled afterwards, so
-        # the fact belongs where it is read BEFORE the first enable_tools
-        # call, not only in that call's result.
-        + _packs.WORKER_SURFACE_NOTE +
-        " Not affiliated with Microsoft Corporation."
-    ),
-)
+# The injected policy, checked at import (edition split): a core imported
+# without one raises PolicySetupError HERE, before a single op registers and
+# long before a workbook is opened. That is a setup error and reads as one; a
+# missing or unverifiable receipt is a different thing entirely and never
+# reaches this line. create_server() reads the policy again for the server
+# it builds.
+_license_policy.active()
 
 
-# ------------------------------------------------------- boundary envelope
+# ------------------------------------------------------- op registration
 
 
-#: Every result crosses the wire ONCE, compact.
-#:
-#: It used to cross twice: pretty-printed in `content` and again, whole, in
-#: `structuredContent`. The indent alone added +48-80% to array-heavy payloads
-#: and the duplication doubled what was left, so a 200-row read cost 22,666
-#: tokens to deliver 6,479 tokens of payload.
-#:
-#: The duplication was not gratuitous: declaring an outputSchema is what
-#: obliges a client to expect structuredContent, and this server declared one
-#: on all 69 tools. Every one of them was the contentless
-#: {"type": "object", "additionalProperties": true} -- 828 tokens of surface
-#: spent buying no validation whatsoever, while committing every response to
-#: being sent twice. So the schema goes (see _tool) and the second copy goes
-#: with it. Nothing about what a caller LEARNS from a result changes: the same
-#: JSON object, same keys, same values, in content[0].text.
-#:
-#: Refusals keep structured_content. They carry isError, which forces the
-#: CallToolResult path anyway, they are small, and RefusalResult's mapping
-#: protocol reads the payload back out of it in-process.
-_COMPACT = (",", ":")
+def _op(fn):
+    """Register a module-level function as an op of the family surface.
 
+    The function itself is returned untouched, so in-process callers (the
+    test suite's srv.<name>(...) convention) keep raw returns and typed
+    exceptions. The registry records the op's tool (surface/groups.py), its
+    generated strict args model, and its read-only and destructive
+    classification (core/readonly.py, core/tool_annotations.py); an
+    unclassified op raises HERE, at import, before any list is built."""
+    from .surface.groups import group_of
 
-class _SuccessEnvelope(_FmcpMiddleware):
-    """Section 7.1 success fields at the MCP boundary: object results gain
-    ok (and file, when the call named one). In-process calls bypass this
-    entirely (module attributes are the raw functions), so the test suite
-    keeps direct returns."""
-
-    _FILE_KEYS = (
-        "file_path", "target_path", "path", "workbook", "src", "dst",
-    )
-
-    async def on_call_tool(self, context, call_next):
-        result = await call_next(context)
-        sc = getattr(result, "structured_content", None)
-        if getattr(result, "is_error", False) or not isinstance(sc, dict):
-            return result
-        out: dict[str, Any] = sc
-        if "ok" not in sc:
-            args = getattr(context.message, "arguments", None) or {}
-            out = {"ok": True}
-            for key in self._FILE_KEYS:
-                value = args.get(key)
-                if isinstance(value, str):
-                    out["file"] = value
-                    break
-            out.update(sc)
-        return _FmcpToolResult(
-            content=_json.dumps(out, ensure_ascii=False, default=str,
-                                separators=_COMPACT),
-        )
-
-
-mcp.add_middleware(_SuccessEnvelope())
-mcp.add_middleware(_envelope.DisabledToolSignpost())
-mcp.add_middleware(_envelope.InputValidationEnvelope())
-
-
-def _tool(pack: str):
-    """Register a tool: the MCP-registered callable is a boundary wrapper
-    (typed exceptions -> structured RefusalResult with isError=true); the
-    module attribute stays the raw function so in-process returns stay
-    direct. Every tool lands in the packs registry under its pack tag
-    ('lite' = the always-on core), and carries the readOnlyHint its
-    core/readonly.py classification gives it. An unclassified tool raises
-    HERE, at import, rather than reaching tools/list without anyone having
-    decided whether it can change a workbook."""
-
-    def deco(fn):
-        if _inspect.iscoroutinefunction(fn):
-            @functools.wraps(fn)
-            async def boundary(*args, **kwargs):
-                try:
-                    return await fn(*args, **kwargs)
-                except _envelope.CATCHABLE as exc:
-                    return _envelope.refuse(exc)
-        else:
-            @functools.wraps(fn)
-            def boundary(*args, **kwargs):
-                try:
-                    return fn(*args, **kwargs)
-                except _envelope.CATCHABLE as exc:
-                    return _envelope.refuse(exc)
-
-        tool = _FunctionTool.from_function(
-            boundary,
-            annotations=_toolann.annotations(
-                fn.__name__, _readonly.read_only_hint(fn.__name__)
-            ),
-            # No outputSchema. Every tool here returns `dict`, from which
-            # fastmcp derives {"type": "object", "additionalProperties": true}
-            # -- a schema that validates nothing, costs 828 tokens of surface
-            # across 69 tools, and obliges the client to expect a second,
-            # duplicate copy of every result in structuredContent. A schema
-            # that bought real validation would be worth both; this one bought
-            # neither. Declaring none is the honest shape. If a tool ever gains a real output
-            # schema, it gets one HERE, per tool, and pays for its own
-            # structuredContent.
-            output_schema=None,
-        )
-        mcp.add_tool(tool)
-        _packs.register(fn.__name__, None if pack == "lite" else pack, tool)
-        return fn
-
-    return deco
+    _registry.register(fn, group_of=group_of)
+    return fn
 
 
 # ------------------------------------------------------- placeholder reader
@@ -237,11 +106,12 @@ def _tool(pack: str):
 def _update_check_status() -> dict:
     """The update report, without its cache path.
 
-    THIS is the server's one and only on-demand check: it may ask PyPI, at
-    most once every seven days, with a two-second cap. No other tool path can
-    reach the network, nothing runs at startup, and a check that fails or is
-    switched off reports that fact rather than going quiet. state is one of:
-    disabled, update_available, current, unknown. Never raises.
+    The on-demand check: it may ask PyPI, at most once every seven days,
+    with a two-second timeout (the weekly background check, started after a
+    tool call, shares the same cache). Nothing runs at startup, and a check
+    that fails or is switched off reports that fact rather than going quiet.
+    state is one of: disabled, update_available, current, unknown. Never
+    raises.
     """
     try:
         return _upd.status()
@@ -249,62 +119,161 @@ def _update_check_status() -> dict:
         return {"state": "unknown", "note": _upd.NOTE_UNKNOWN}
 
 
-@_tool("lite")
-def get_server_info() -> dict:
-    """Report the KitchenSink4XL server build: version, the active tool
-    surface (enabled tool count and approximate token bill), the optional
-    packs, the host platform and Python, and config, which carries the
-    install settings a user otherwise cannot confirm arrived: whether path
-    sandboxing is on with how many roots (a count, never the paths), and
-    whether saves deep-verify through Excel. A read-only orient call that
-    needs no workbook and touches no file; use it to confirm the server is
-    up and see which packs are loaded."""
+def _surface_facts() -> dict:
+    """The fixed surface this server lists: tool and op counts, read-only
+    mode, and what the launch settings removed."""
+    from .surface import copy as _copy
+
+    plan = _runtime.plan()
+    settings = plan.settings
+    return {
+        "tools": len(plan.tools),
+        "ops": plan.op_count(),
+        "read_only": settings.read_only,
+        "forbidden": sorted(set(plan.forbidden_tools) | set(plan.forbidden_ops)),
+        "decided_by": _copy.SETTINGS_OWNER,
+        "legacy_settings_ignored": list(settings.legacy_set),
+        # What the tool list costs a client to load, by the
+        # counter scripts/measure_surface.py uses (compact JSON of each
+        # listed tool / 4); Word reports the same field.
+        "approx_active_tokens": _approx_active_tokens(plan),
+    }
+
+
+def _approx_active_tokens(plan) -> int:
+    import json as _json
+
+    total = 0
+    for tp in plan.tools.values():
+        tool = {"name": tp.name, "title": tp.title, "description": tp.description,
+                "inputSchema": tp.input_schema, "annotations": tp.annotations}
+        total += round(len(_json.dumps(tool, ensure_ascii=False, separators=(",", ":"))) / 4)
+    return total
+
+
+def _installed_build() -> dict:
+    """Which bundle this server came out of, read from the environment
+    stamp the installer wrote. Three nulls on a Community install, which is
+    how a support bundle tells the two editions apart at a glance."""
+    try:
+        return _upd.installed_build()
+    except Exception:
+        return {"bundle_version": None, "release_id": None, "channel": None}
+
+
+def _os_line() -> str:
+    """The operating system, for get_server_info, WITHOUT asking WMI (the
+    same design as the Word editor).
+
+    platform.platform() on Windows reaches platform._wmi_query (Python 3.12+:
+    win32_ver and the machine lookup), and one such query can sit in
+    _wmi.exec_query for minutes. uname is cached
+    only on success, so every retry repeated the stuck query. On Windows the
+    line is built from sys.getwindowsversion() and the process environment,
+    which answer instantly; elsewhere platform.platform() uses os.uname and
+    is kept."""
+    if _sys.platform == "win32":
+        import os as _os
+
+        v = _sys.getwindowsversion()
+        arch = _os.environ.get("PROCESSOR_ARCHITEW6432") or _os.environ.get(
+            "PROCESSOR_ARCHITECTURE") or "unknown"
+        return f"Windows-{v.major}.{v.minor}.{v.build}-{arch}"
+    return _platform.platform()
+
+
+@_op
+def get_server_info(include_licensee: bool = False) -> dict:
+    """Report KitchenSink4XL version, edition, licensing status, active tool
+    count, op count and launch-settings narrowing, platform, Python, and sandbox/
+    Excel verification settings (root count, never paths). Needs no workbook.
+    include_licensee explicitly discloses the signed company identity.
+    Business reads only a configured offline receipt. Community may check
+    PyPI and update its cache; KS4XL_UPDATE_CHECK=off disables that I/O."""
+    _pol = _license_policy.active()
     out = {
-        "name": "kitchensink4xl",
+        "name": _pol.product_id,
         # Self-identification for a connected agent: the brand, the
-        # distribution to pip install, where the docs live, and the other
-        # products in the suite. `name` stays the PyPI distribution for compatibility
+        # distribution to pip install, where the docs live, and the three
+        # siblings. `name` stays the PyPI distribution for compatibility
         # with anything already reading it.
         "product": "KitchenSink4XL",
-        "package": "kitchensink4xl",
-        "homepage": "https://kitchensink4.ai/KitchenSink4XL/",
+        "package": _pol.product_id,
+        "edition": _pol.edition_id,
+        # include_licensee is the client-visible parameter and does not
+        # change; redaction is the policy-side default it maps onto.
+        "licensing": _pol.describe_license(redacted=not include_licensee),
+        "homepage": "https://community.kitchensink4.ai/xl/",
         "family": ["kitchensink4word", "kitchensink4ppt", "kitchensink4web"],
-        "version": __version__,
-
-        "surface": _packs.surface_report(),
-        "packs_available": _packs.pack_names(),
-        "platform": _platform.platform(),
+        # The edition distribution's version, which is what a customer
+        # installed and what the old single wheel reported. The shared
+        # editing core's own version is reported alongside it.
+        "version": _pol.distribution_version,
+        # What stage of the product this is, and when this build was cut.
+        # Business reads both out of its generated build metadata; Community
+        # has neither and reports null for both. getattr, because a policy
+        # adapter older than these two fields is still a supportable
+        # installation and not a reason to fail a status call.
+        "channel": getattr(_pol, "channel", None),
+        "release_date": getattr(_pol, "release_date", None),
+        # WHAT THIS BUILD TRUSTS, and how far it can follow a receipt back to
+        # it. chain_version is the certificate schema this build understands,
+        # and it is null when the build pins no roots and therefore cannot
+        # follow a chain at all. trust_list_version says which retirement list
+        # it shipped with, so support can tell at a glance whether an
+        # installation has heard that a key was pulled. root_key_ids names the
+        # anchors, which is the licensing fact an operator reads aloud when
+        # comparing a key out of band. None of the three is a secret: a root's
+        # public half is public by construction, and Community reports the
+        # same nulls it reports for channel.
+        "chain_version": getattr(_pol, "chain_version", None),
+        "trust_list_version": getattr(_pol, "trust_list_version", None),
+        "root_key_ids": getattr(_pol, "root_key_ids", []),
+        "core_version": __version__,
+        "surface": _surface_facts(),
+        "platform": _os_line(),
         "python": _sys.version.split()[0],
         "config": {
             "sandbox_active": _sandbox.active(),
             "allowed_roots_count": _sandbox.root_count(),
             "verify_com_default": _package.com_verify_default(),
         },
+        # When the launch settings turn Excel off,
+        # say so, and that verify_com and KS4XL_VERIFY_COM are off with it.
+        **({"excel": _runtime.excel_forbidden()} if _runtime.excel_forbidden() else {}),
     }
-    # The server's one and only update surface, and its one and only path to
-    # the network: an on-demand check, at most once every seven days, two-second
-    # cap, off under KS4XL_UPDATE_CHECK=off. Nothing runs at startup, no other
-    # tool can fire it, a failed check reports the failure, and this never
-    # raises.
+    # The on-demand update report: at most once every seven days, two-second
+    # timeout, off under KS4XL_UPDATE_CHECK=off. Nothing runs at startup, a
+    # failed check reports the failure, and this never raises. (The weekly
+    # background check starts after a tool call and shares the same cache.)
     out["update_check"] = _update_check_status()
+    # WHICH BUNDLE THIS IS. Three product versions can repeat across two
+    # bundles, so the product version alone does not name the build a
+    # support case is looking at. These three do, and they are null on a
+    # Community install, which is itself the answer to "which edition is
+    # this".
+    build = _installed_build()
+    out["bundle_version"] = build["bundle_version"]
+    out["release_id"] = build["release_id"]
+    out["channel"] = out.get("channel") or build["channel"]
     notice = _upd.update_notice()
     if notice:
         out["update"] = notice
     return out
 
 
-# ============================== CORE DATA PLANE TOOLS
-# Lifecycle + discovery, cell/range read/write, the token-
+# ================================================================ DATA PLANE
+# The core data plane: lifecycle + discovery, cell/range read/write, the token-
 # shaped read (query_range), the grid view + batch layer, and formatting. All
 # lite (the daily driver). Each registered wrapper is a thin dispatch over an
 # ops/ module; every mutation runs through WorkbookPackage, so the hazard gate,
-# backup-before-mutation, and verify-after-write are automatic. No em dashes.
+# backup-before-mutation, and verify-after-write are automatic.
 
 
 # ------------------------------------------------- lifecycle and discovery
 
 
-@_tool("lite")
+@_op
 def create_workbook(path: str, sheets: list[str] | None = None,
                     overwrite: bool = False) -> dict:
     """Create a new .xlsx workbook at path with the given sheet names (default a
@@ -318,7 +287,7 @@ def create_workbook(path: str, sheets: list[str] | None = None,
     return _lifecycle.create_workbook(path, sheets=sheets, overwrite=overwrite)
 
 
-@_tool("lite")
+@_op
 def copy_workbook(src: str, dst: str, overwrite: bool = False) -> dict:
     """Copy a workbook file byte-for-byte from src to dst, so nothing in the
     original is re-serialized or degraded (charts, shapes, macros, and queries
@@ -330,7 +299,7 @@ def copy_workbook(src: str, dst: str, overwrite: bool = False) -> dict:
     return _lifecycle.copy_workbook(src, dst, overwrite=overwrite)
 
 
-@_tool("lite")
+@_op
 def get_workbook_metadata(path: str) -> dict:
     """Read a workbook's structure without opening it for edit: every sheet with
     its visibility state, TRUE used range (value-bearing bounds, not the often
@@ -341,7 +310,7 @@ def get_workbook_metadata(path: str) -> dict:
     return _lifecycle.get_workbook_metadata(path)
 
 
-@_tool("lite")
+@_op
 def diagnose_workbook(path: str) -> dict:
     """The round-trip hazard scan surfaced as a health readout: which fragile
     parts the workbook holds (slicers, shapes, embedded objects, Power Query,
@@ -352,7 +321,7 @@ def diagnose_workbook(path: str) -> dict:
 
     What to do with the verdict: hazards never block reads; a would-lose
     verdict means every mutating tool will refuse unless you route through
-    Excel (com pack) or pass allow_loss:true (an explicit, backed-up
+    Excel (xl_app) or pass allow_loss:true (an explicit, backed-up
     acceptance of the loss). A clean verdict means file-based edits are
     round-trip safe. Content with no part of its own is covered too: the scan
     reads each worksheet's extLst, so x14 conditional formats (data bars, icon
@@ -364,7 +333,7 @@ def diagnose_workbook(path: str) -> dict:
     return _lifecycle.diagnose_workbook(path)
 
 
-@_tool("lite")
+@_op
 def manage_worksheet(path: str, action: str, sheet: str | None = None,
                      new_name: str | None = None, index: int | None = None,
                      state: str | None = None, allow_loss: bool = False,
@@ -377,10 +346,12 @@ def manage_worksheet(path: str, action: str, sheet: str | None = None,
     least one VISIBLE sheet, so deleting or hiding the last visible one
     refuses.
 
-    Consequence worth knowing: delete does NOT rewrite references, so formulas
-    and defined names that pointed at the deleted sheet break to #REF! when
-    Excel opens the file (Excel's own behavior); rename likewise does not
-    rewrite cross-sheet formula text. Audit references first when in doubt. A
+    References follow, as in Excel: rename rewrites every reference to the
+    sheet (formulas and 3D spans, defined names, conditional-format and
+    validation formulas, chart references, pivot sources), and delete turns
+    references to the deleted sheet into #REF! (a 3D span whose end it was
+    shrinks to the next sheet), both counted in references_rewritten.
+    Hyperlink locations are left as they are, as Excel leaves them. A
     hazardous workbook refuses unless allow_loss is true. Auto-backup:
     prev/anchor slots in .ks4xl-backups (backup=false skips rotation); atomic
     verified save, restored on failed verify. Refuses while open in Excel."""
@@ -393,20 +364,21 @@ def manage_worksheet(path: str, action: str, sheet: str | None = None,
 # --------------------------------------------------------- cells and ranges
 
 
-@_tool("lite")
+@_op
 def read_range(path: str, location: _schemas.Location, values: str = "cached",
                sheet: str | None = None) -> dict:
     """Read a cell or range addressed by a location object (cell, range, r1c1,
     name, table, used_range, region, search, or a grid-view anchor; sheet
-    picks the sheet when the location does not, default active). values controls the honest calc story:
-    'cached' returns the last calculated values, 'formula' the formula
-    strings, 'both' pairs each value with a label (cached, absent, formula,
-    value). A formula cell with no cached value is labelled 'absent', never
-    passed off as blank. Read-only; page large ranges with query_range."""
+    picks the sheet). values: 'cached' the last calculated values, 'formula'
+    the formulas, 'both' each value labelled (cached, absent, formula,
+    value), 'displayed' the text each cell shows in Excel (0.75 under # ?/?
+    shows ' 3/4'). cached and both add shows, {cell: text}, where that text
+    differs from the value. A formula with no cached value is 'absent',
+    never blank. Read-only."""
     return _cells.read_range(path, location, values=values, sheet=sheet)
 
 
-@_tool("lite")
+@_op
 def set_cell(path: str, location: _schemas.Location, value: _schemas.CellValue,
              sheet: str | None = None, allow_loss: bool = False,
              backup: bool = True, verify_com: bool | None = None) -> dict:
@@ -422,25 +394,27 @@ def set_cell(path: str, location: _schemas.Location, value: _schemas.CellValue,
                                verify_com=verify_com)
 
 
-@_tool("lite")
+@_op
 def write_range(path: str, location: _schemas.Location,
                 data: _schemas.CellMatrix, sheet: str | None = None,
+                parse_dates: bool = False, echo_cells: bool = False,
                 allow_loss: bool = False, backup: bool = True,
                 verify_com: bool | None = None) -> dict:
-    """Write a 2D block of values and formulas anchored at the location's
-    top-left cell. data is a list of row lists and must be RECTANGULAR:
-    ragged rows refuse (pad short rows with null, which clears those
-    cells); content outside the block is never touched. Formula strings
-    ('=...') are normalized and flag recalculation. Grid limits and the
-    200,000-cell write ceiling apply. A hazardous workbook refuses unless
-    allow_loss is true. Auto-backup to .ks4xl-backups; atomic verified
-    save. Refuses while open in Excel."""
-    return _cells.write_range(path, location, data, sheet=sheet,
-                              allow_loss=allow_loss, backup=backup,
+    """Write a 2D block of values and formulas from the location's top-left
+    cell. data is a list of equal-length rows (null clears a cell); nothing
+    outside the block changes. A date is {"date": "2026-03-24"} (parse_dates
+    =true also reads ISO date text); {"text": "=A1"} keeps text that looks
+    like a formula. Up to 1,000,000 cells; the answer lists 20 written cells
+    (echo_cells=true lists all). A hazardous workbook refuses unless
+    allow_loss; auto-backup, verified save; refuses while open in Excel."""
+    with _package.echo_cells(echo_cells):
+        return _cells.write_range(path, location, data, sheet=sheet,
+                                  parse_dates=parse_dates,
+                                  allow_loss=allow_loss, backup=backup,
                                   verify_com=verify_com)
 
 
-@_tool("lite")
+@_op
 def clear_range(path: str, location: _schemas.Location, what: str = "contents",
                 sheet: str | None = None, allow_loss: bool = False,
                 backup: bool = True,
@@ -457,7 +431,7 @@ def clear_range(path: str, location: _schemas.Location, what: str = "contents",
                                   verify_com=verify_com)
 
 
-@_tool("lite")
+@_op
 def copy_range(path: str, source: _schemas.SourceLocation,
                dest: _schemas.DestLocation, what: str = "all",
                adjust_formulas: bool = True, sheet: str | None = None,
@@ -477,7 +451,7 @@ def copy_range(path: str, source: _schemas.SourceLocation,
                                  verify_com=verify_com)
 
 
-@_tool("lite")
+@_op
 def move_range(path: str, source: _schemas.SourceLocation,
                dest: _schemas.DestLocation, sheet: str | None = None,
                allow_loss: bool = False, backup: bool = True,
@@ -494,7 +468,7 @@ def move_range(path: str, source: _schemas.SourceLocation,
                                  verify_com=verify_com)
 
 
-@_tool("lite")
+@_op
 def query_range(path: str, location: _schemas.OptionalLocation = None,
                 sheet: str | None = None, header: bool = True,
                 columns: _schemas.ColumnList = None,
@@ -505,10 +479,10 @@ def query_range(path: str, location: _schemas.OptionalLocation = None,
                 offset: int = 0, distinct: bool = False, records: bool = False,
                 values: str = "cached") -> dict:
     """Filter, project, sort, paginate, and aggregate a range SERVER-SIDE so an
-    agent reads only the rows and columns it needs instead of a whole sheet.
+    agent reads only the rows and columns it needs.
 
     location defaults to the sheet's true used range. With header=true the
-    first row names the columns (otherwise the A1 letter does). where is a
+    first row names the columns (else the A1 letters). where is a
     list of {column, op, value} predicates joined by match ('all' or 'any');
     ops: eq, ne, gt, ge, lt, le, contains, startswith, endswith, regex, in,
     not_in, is_blank, not_blank. columns projects a subset; order_by is a list
@@ -517,8 +491,9 @@ def query_range(path: str, location: _schemas.OptionalLocation = None,
     count_nonblank, count_distinct, sum, avg, min, max, first, last),
     optionally per group_by (records=true emits objects).
 
-    Semantics: predicates read CACHED and literal values (uncalculated
-    formulas read as blank; recalc for exact results); gt/ge/lt/le compare
+    Semantics: predicates read CACHED and literal values
+    (values='displayed': the shown text; uncalculated formulas read as blank;
+    recalc for exact results); gt/ge/lt/le compare
     numerically when both sides coerce, else case-folded text; blanks
     never satisfy ordered comparisons; regex is timeout-guarded.
     Aggregates follow Excel: sum/avg/min/max consume NUMERIC cells only
@@ -537,7 +512,7 @@ def query_range(path: str, location: _schemas.OptionalLocation = None,
 # ------------------------------------------------------- grid view + batch
 
 
-@_tool("lite")
+@_op
 def get_grid_view(path: str, location: _schemas.OptionalLocation = None,
                   sheet: str | None = None, max_rows: int = 50,
                   max_cols: int = 30, values: str = "cached") -> dict:
@@ -549,23 +524,27 @@ def get_grid_view(path: str, location: _schemas.OptionalLocation = None,
 
     location defaults to the sheet's used range. values='cached' shows last
     calculated values with formula cells marked (the florin character U+0192
-    marks a formula with no cached value); 'formula' shows the formula
-    strings. The view paginates with max_rows and max_cols (caps 200 and 100)
+    marks a formula with no cached value), and shows maps each shown cell
+    whose text in Excel differs from its value to that text (read_range
+    with values='displayed' gives the text of every cell); 'formula' shows
+    the formula strings. The view paginates with max_rows and max_cols (caps 200 and 100)
     and reports truncated flags so the caller knows when to page.
     formula_cells maps addresses to their formula strings; merged ranges
     intersecting the view are listed. The result's anchor is a token for the
     shown rectangle: {"anchor": token} addresses it in any positional tool,
     refusing STALE_ANCHOR if the region changed since this view; cells
-    inside stay plain A1. Read-only; works while the file is open in Excel.
-    Pair it with apply_edits to edit what you see."""
+    inside stay plain A1. not_shown names what the table leaves out (notes
+    and threaded comments on the shown cells, the sheet's charts and
+    images) with the op that reads each. Read-only; works while the file is
+    open in Excel. Pair it with apply_edits to edit what you see."""
     return _view.get_grid_view(path, location=location, sheet=sheet,
                                max_rows=max_rows, max_cols=max_cols,
                                values=values)
 
 
-@_tool("lite")
-def apply_edits(path: str, edits: _schemas.BatchEdits, allow_loss: bool = False,
-                backup: bool = True,
+@_op
+def apply_edits(path: str, edits: _schemas.BatchEdits, echo_cells: bool = False,
+                allow_loss: bool = False, backup: bool = True,
                 verify_com: bool | None = None) -> dict:
     """Apply many addressed edits as ONE atomic batch. edits is a list of
     {op, location, ...}: set_value {value}, set_formula {formula}, clear
@@ -582,14 +561,15 @@ def apply_edits(path: str, edits: _schemas.BatchEdits, allow_loss: bool = False,
     hazardous workbook refuses unless allow_loss is true; refuses while the
     file is open in Excel. Returns the count of edits applied and cells
     touched."""
-    return _view.apply_edits(path, edits, allow_loss=allow_loss, backup=backup,
-                             verify_com=verify_com)
+    with _package.echo_cells(echo_cells):
+        return _view.apply_edits(path, edits, allow_loss=allow_loss, backup=backup,
+                                 verify_com=verify_com)
 
 
 # --------------------------------------------------------- formatting
 
 
-@_tool("lite")
+@_op
 def format_cells(path: str, location: _schemas.Location,
                  number_format: str | None = None, font: dict | None = None,
                  fill: dict | None = None, border: dict | None = None,
@@ -601,7 +581,7 @@ def format_cells(path: str, location: _schemas.Location,
     code; font is {name, size, bold, italic, underline, strike, color}; fill
     is {color} or {pattern, fg, bg}; border is {style, color, sides};
     alignment is {horizontal, vertical, wrap_text, text_rotation, indent};
-    colors are hex. Named styles and conditional formats: design pack.
+    colors are hex. Named styles and conditional formats: xl_format.
     Hazard-gated (allow_loss overrides); auto-backup; atomic verified save.
     Refuses while open in Excel."""
     return _format.format_cells(
@@ -610,7 +590,7 @@ def format_cells(path: str, location: _schemas.Location,
         allow_loss=allow_loss, backup=backup, verify_com=verify_com)
 
 
-@_tool("lite")
+@_op
 def set_dimensions(path: str, sheet: str | None = None,
                    column_widths: dict | None = None,
                    row_heights: dict | None = None,
@@ -629,7 +609,7 @@ def set_dimensions(path: str, sheet: str | None = None,
     column_widths maps column letters or indices to widths in Excel character
     units; row_heights maps row numbers to heights in points; autofit_columns
     sizes columns to content as a best-effort APPROXIMATION (true autofit
-    needs Excel via the com pack).
+    needs Excel via xl_app).
 
     Grouping is Excel's outline: group_rows and group_columns take spans of
     {start, end, level 1-7, collapsed}, the collapse bracket a budget or
@@ -648,19 +628,19 @@ def set_dimensions(path: str, sheet: str | None = None,
         allow_loss=allow_loss, backup=backup, verify_com=verify_com)
 
 
-# ====================================== TABLES, NAMES, SORT, I/O TOOLS
-# File-tier families: tables and named ranges,
+# ============================================ TABLES, RULES, COMMENTS, EXPORT
+# Ungated file-tier families: tables and named ranges,
 # conditional formatting and data validation, sort and filter, comments and
 # hyperlinks, import and export. Each registered wrapper is a thin dispatch over
 # an ops/ module; every mutation runs through WorkbookPackage, so the hazard
 # gate, backup-before-mutation, and verify-after-write are automatic. Structural
-# table edits reuse core.refs so refs stay coherent. No em dashes.
+# table edits reuse core.refs so refs stay coherent.
 
 
 # ------------------------------------------------------------------- tables
 
 
-@_tool("lite")
+@_op
 def create_table(path: str, location: _schemas.Location, name: str,
                  header: bool = True, style: str = "TableStyleMedium9",
                  row_stripes: bool = True, col_stripes: bool = False,
@@ -682,22 +662,22 @@ def create_table(path: str, location: _schemas.Location, name: str,
         allow_loss=allow_loss, backup=backup, verify_com=verify_com)
 
 
-@_tool("lite")
+@_op
 def get_table(path: str, name: str,
               columns: _schemas.TableColumns = None,
               values: str = "cached", records: bool = False) -> dict:
     """Read a table's data by its name (case-insensitive). columns projects a
-    subset; values is cached | formula | both (the honest calc story);
-    records true returns row objects keyed by column name. Returns the
-    table ref, the column names, and the data rows without the header or
-    totals row; filter or page big tables with query_range and a {table}
-    location. Advanced table ops (columns, totals, resize, banding):
-    manage_table (design pack). Read-only; nothing is written."""
+    subset; values is cached, formula, both, or displayed (the text Excel
+    shows), and cached and both add shows where that text differs from the
+    value; records true returns row objects keyed by column name. Returns
+    the table ref, the column names, and the data rows without the header or
+    totals row; page big tables with query_range and a {table} location.
+    Table edits: manage_table. Read-only."""
     return _tables.get_table(path, name, columns=columns, values=values,
                              records=records)
 
 
-@_tool("design")
+@_op
 def manage_table(path: str, name: str, action: str,
                  values: _schemas.TableValues = None,
                  index: int | None = None, column: str | None = None,
@@ -730,7 +710,7 @@ def manage_table(path: str, name: str, action: str,
 # -------------------------------------------------------------- named ranges
 
 
-@_tool("design")
+@_op
 def manage_name(path: str, action: str, name: str | None = None,
                 refers_to: str | None = None, scope: str | None = None,
                 new_name: str | None = None, allow_loss: bool = False,
@@ -757,7 +737,7 @@ def manage_name(path: str, action: str, name: str | None = None,
 # ----------------------------------------------------- conditional formatting
 
 
-@_tool("design")
+@_op
 def manage_conditional_format(path: str, action: str,
                               location: _schemas.OptionalLocation = None,
                               cf_type: str | None = None,
@@ -766,20 +746,26 @@ def manage_conditional_format(path: str, action: str,
                               index: int | None = None,
                               allow_loss: bool = False, backup: bool = True,
                               verify_com: bool | None = None) -> dict:
-    """Manage conditional-formatting rules. action is add, list (read-only), or
-    delete. For add, location is the range and cf_type picks the rule with its
-    params: cell_is {operator, formula (a value or [lo, hi]), fill,
-    font_color}; formula {formula, fill}; color_scale {colors: 2 or 3 hex
-    stops}; data_bar {color, show_value}; icon_set {icon_style, values,
-    show_value, reverse}; top_bottom {rank, percent, bottom, fill}; unique and
-    duplicate {fill, font_color}; above_average {below, equal_average, std_dev
-    1-3, fill, font_color}; time_period {period: today | yesterday | tomorrow
-    | last7Days | thisWeek | lastWeek | nextWeek | thisMonth | lastMonth |
-    nextMonth, fill}; blanks and errors {fill, font_color}. For delete,
+    """Manage conditional-formatting rules. action is add, list (read-only:
+    each rule's cf_type, operator, formula and colours, in add's own words),
+    or delete. For add, location is the range and cf_type picks the rule with
+    its params: cell_is {operator (greater_than, less_than, between, equal,
+    not_equal, greater_than_or_equal, less_than_or_equal, not_between),
+    formula (a value or [lo, hi]), fill, font_color}; formula {formula,
+    fill}; color_scale {colors: 2 or 3 hex stops}; data_bar {color,
+    show_value}; icon_set {icon_style, values, show_value, reverse};
+    top_bottom {rank, percent, bottom, fill}; unique and duplicate {fill,
+    font_color}; above_average {below, equal_average, std_dev 1-3, fill,
+    font_color}; time_period {period: today | yesterday | tomorrow |
+    last_7_days | this_week | last_week | next_week | this_month |
+    last_month | next_month, fill}; blanks and errors {fill, font_color}.
+    Excel's camelCase spellings (greaterThan, last7Days) are accepted too.
+    For delete,
     location must EXACTLY match the rule's stored range (or one member of it)
-    and an optional index picks one rule of several. The file stores the rule
-    declaratively; Excel evaluates it and paints the cells on open, like the
-    calc story, so a time_period rule follows the reader's clock. For the
+    and an optional 0-based index picks one rule of several. Excel
+    evaluates the
+    rules when it opens the file, so a time_period rule follows the reader's
+    clock. For the
     mutating actions: a hazardous workbook refuses unless allow_loss is true;
     auto-backup to prev/anchor slots in .ks4xl-backups; atomic verified save.
     Refuses while open in Excel."""
@@ -792,7 +778,7 @@ def manage_conditional_format(path: str, action: str,
 # ------------------------------------------------------------ data validation
 
 
-@_tool("design")
+@_op
 def manage_data_validation(path: str, action: str,
                            location: _schemas.OptionalLocation = None,
                            dv_type: str | None = None,
@@ -806,13 +792,17 @@ def manage_data_validation(path: str, action: str,
                            verify_com: bool | None = None) -> dict:
     """Manage data-validation rules. action is add, list (read-only), or
     delete. For add, location is the range and dv_type is one of list, whole,
-    decimal, date, time, textLength, or custom. A list takes values (inline
+    decimal, date, time, text_length, or custom. A list takes values (inline
     items, or a range/formula; inline lists over 255 characters draw a
-    warning, point long lists at a range); the numeric and date types take
-    operator plus formula1 and formula2 bounds; custom takes formula1.
-    allow_blank (default true) lets empty entries pass; prompt and error set
-    the input and error messages. Delete matches the rule's stored range
-    exactly. The file stores the rule; Excel enforces it on entry. For the
+    warning, point long lists at a range; an inline item cannot hold a
+    comma); the numeric and date types take operator (between, not_between,
+    equal, not_equal, greater_than, less_than, greater_than_or_equal,
+    less_than_or_equal) plus formula1 and formula2 bounds; custom takes
+    formula1. allow_blank (default true) lets empty entries pass; prompt and
+    error set the input and error messages, and an invalid entry is refused
+    with Excel's own alert when error is not given. Delete matches the
+    rule's stored range exactly. The file stores the rule; Excel enforces it
+    on entry. For the
     mutating actions: a hazardous workbook refuses unless allow_loss is true;
     auto-backup to prev/anchor slots in .ks4xl-backups; atomic verified save.
     Refuses while open in Excel."""
@@ -826,7 +816,7 @@ def manage_data_validation(path: str, action: str,
 # ------------------------------------------------------------ sort and filter
 
 
-@_tool("lite")
+@_op
 def sort_range(path: str, location: _schemas.Location, keys: _schemas.SortKeys,
                has_header: bool = True, sheet: str | None = None,
                allow_loss: bool = False, backup: bool = True,
@@ -844,7 +834,7 @@ def sort_range(path: str, location: _schemas.Location, keys: _schemas.SortKeys,
         allow_loss=allow_loss, backup=backup, verify_com=verify_com)
 
 
-@_tool("lite")
+@_op
 def set_filter(path: str, location: _schemas.Location,
                criteria: _schemas.FilterCriteria = None, sheet: str | None = None,
                allow_loss: bool = False, backup: bool = True,
@@ -862,7 +852,7 @@ def set_filter(path: str, location: _schemas.Location,
         backup=backup, verify_com=verify_com)
 
 
-@_tool("lite")
+@_op
 def clear_filter(path: str, location: _schemas.OptionalLocation = None,
                  sheet: str | None = None, allow_loss: bool = False,
                  backup: bool = True, verify_com: bool | None = None) -> dict:
@@ -881,7 +871,7 @@ def clear_filter(path: str, location: _schemas.OptionalLocation = None,
 # ----------------------------------------------------- comments and hyperlinks
 
 
-@_tool("io")
+@_op
 def manage_comment(path: str, action: str,
                    location: _schemas.OptionalLocation = None,
                    text: str | None = None, author: str | None = None,
@@ -892,11 +882,17 @@ def manage_comment(path: str, action: str,
     (location), or list (read-only; every comment with its cell, text, and
     author). This writes legacy notes, which round-trip cleanly through a
     file-based save. Threaded reply-and-resolve comments are a different part
-    this tool can neither read nor write: the hazard scan flags them and the
-    mutation gate refuses rather than dropping them; threaded reply and
-    resolve are not offered in v1. For the mutating actions: a hazardous
-    workbook refuses
-    unless allow_loss is true; auto-backup to prev/anchor slots in
+    this tool does not write: the hazard scan flags them and the mutation
+    gate refuses rather than dropping them; list reports a threaded comment
+    as threaded, with its author and text. Leave author out to sign with
+    your own name (the Office user name, else the Windows sign-in name), or
+    pass author="assistant" to sign as "AI Assistant via KS4XL", which
+    KS4XL_AUTHOR=assistant makes the default; any other author is used as
+    given. The answer names the author and its source. An email address is
+    never written as an author: the default signs instead and the answer's
+    warnings say so.
+    For the mutating actions: a hazardous workbook
+    refuses unless allow_loss is true; auto-backup to prev/anchor slots in
     .ks4xl-backups; atomic verified save. Refuses while open in Excel."""
     return _annotations.manage_comment(
         path, action, location=location, text=text, author=author,
@@ -904,7 +900,7 @@ def manage_comment(path: str, action: str,
             verify_com=verify_com)
 
 
-@_tool("lite")
+@_op
 def manage_hyperlink(path: str, action: str,
                      location: _schemas.OptionalLocation = None,
                      target: str | None = None, display: str | None = None,
@@ -929,60 +925,65 @@ def manage_hyperlink(path: str, action: str,
 # ------------------------------------------------------------ import / export
 
 
-@_tool("lite")
+@_op
 def import_data(path: str, source: str | None = None,
                 source_file: str | None = None, fmt: str = "auto",
                 location: _schemas.OptionalLocation = None,
                 sheet: str | None = None, header: bool = True,
                 delimiter: str | None = None, encoding: str = "utf-8",
-                formulas: bool = False, allow_loss: bool = False,
-                backup: bool = True, verify_com: bool | None = None) -> dict:
-    """Import CSV, TSV, or JSON into a sheet at an anchor. Pass source (inline
-    text) or source_file (a path); fmt auto-detects from the extension.
-    location is the top-left anchor (default A1). A cell whose text begins
-    with =, +, -, or @ is written as TEXT to block formula injection unless
-    formulas is true. An import past the 200,000-cell write ceiling refuses
-    rather than dropping rows. A hazardous workbook refuses unless allow_loss
-    is true. Auto-backup to .ks4xl-backups; atomic verified save. Refuses
+                formulas: bool = False, column_types: dict | None = None,
+                parse_dates: bool = False, echo_cells: bool = False,
+                allow_loss: bool = False, backup: bool = True,
+                verify_com: bool | None = None) -> dict:
+    """Import CSV, TSV or JSON at location (default A1) from source (text) or
+    source_file (a path); the format comes from the extension and a CSV's
+    delimiter from its lines (a semicolon file reads decimal commas). Codes
+    stay text: leading-zero, E-notation and over-15-digit columns are kept
+    as text and reported; column_types sets text, number, date or auto per
+    column; parse_dates=true reads ISO dates. Text starting =, +, - or @
+    stays text unless formulas=true. Auto-backup, verified save; refuses
     while open in Excel."""
-    return _dataio.import_data(
-        path, source=source, source_file=source_file, fmt=fmt,
-        location=location, sheet=sheet, header=header, delimiter=delimiter,
-        encoding=encoding, formulas=formulas, allow_loss=allow_loss,
-        backup=backup, verify_com=verify_com)
+    with _package.echo_cells(echo_cells):
+        return _dataio.import_data(
+            path, source=source, source_file=source_file, fmt=fmt,
+            location=location, sheet=sheet, header=header, delimiter=delimiter,
+            encoding=encoding, formulas=formulas, column_types=column_types,
+            parse_dates=parse_dates, allow_loss=allow_loss,
+            backup=backup, verify_com=verify_com)
 
 
-@_tool("lite")
+@_op
 def export_range(path: str, location: _schemas.OptionalLocation = None,
                  sheet: str | None = None, fmt: str = "csv",
                  header: bool = True, values: str = "cached",
                  records: bool = False, out_file: str | None = None,
-                 overwrite: bool = False) -> dict:
-    """Export a range, table, or sheet to CSV, TSV, or JSON. location defaults
-    to the true used range; {table} exports a table. values is cached |
-    formula | both; the result states the mode used. out_file writes a file;
-    otherwise text returns inline. The target is guarded: never the source
-    workbook, a workbook extension, a reserved device name, or
-    .ks4xl-backups; an existing file needs overwrite, which keeps a .bak
-    first. Filter-hidden rows export like any other row. Multi-sheet is
-    export_file, io pack. Read-only."""
+                 overwrite: bool = False, bom: bool = True) -> dict:
+    """Export a range, table or sheet (location; default the used range) to
+    CSV, TSV or JSON. values is cached, formula, both or displayed (what
+    each number format shows, as Excel's CSV does: 00000 keeps 02134).
+    CSV/TSV write TRUE/FALSE and plain dates as Excel does; a written file
+    starts with Excel's UTF-8 byte-order mark unless bom=false. out_file
+    writes a file (never the workbook or .ks4xl-backups; overwrite keeps a
+    .bak), else the text returns inline. Whole sheets: export_file.
+    Read-only."""
     return _dataio.export_range(
         path, location=location, sheet=sheet, fmt=fmt, header=header,
         values=values, records=records, out_file=out_file,
-        overwrite=overwrite)
+        overwrite=overwrite, bom=bom)
 
 
-# ============================== STRUCTURE, FIND/REPLACE, STYLE TOOLS
-# File-tier families: the structural-edit flagship (modify_grid_structure over core.refs), merges,
+# ====================================== STRUCTURE, MERGES, FIND AND STYLES
+# Ungated file-tier families on the audited engine: the
+# structural-edit flagship (modify_grid_structure over core.refs), merges,
 # workbook-wide find/replace, the scatter cell pair, and the style layer
 # (named styles, format painter, style-bloat audit). Every mutation runs
-# through WorkbookPackage as before. No em dashes.
+# through WorkbookPackage.
 
 
 # ---------------------------------------------------------- grid structure
 
 
-@_tool("lite")
+@_op
 def modify_grid_structure(path: str, action: str, at: _schemas.GridPosition,
                           count: int = 1, sheet: str | None = None,
                           allow_loss: bool = False, backup: bool = True,
@@ -1013,7 +1014,7 @@ def modify_grid_structure(path: str, action: str, at: _schemas.GridPosition,
 # ------------------------------------------------------------------- merges
 
 
-@_tool("lite")
+@_op
 def set_merge(path: str, action: str,
               location: _schemas.OptionalLocation = None,
               sheet: str | None = None, confirm_data_loss: bool = False,
@@ -1039,26 +1040,26 @@ def set_merge(path: str, action: str,
 # ----------------------------------------------------------- find / replace
 
 
-@_tool("lite")
+@_op
 def find_cells(path: str, query: str, look_in: str = "values",
                match: str = "contains", match_case: bool = False,
                sheet: str | None = None,
                location: _schemas.OptionalLocation = None, limit: int = 100,
                offset: int = 0) -> dict:
-    """Search cell values and/or formulas across a workbook, sheet, or range
-    and return EVERY match with its unambiguous address (the plural form
-    of the single-target search location selector). match is exact,
+    """Search cell values and/or formulas across a workbook, sheet, or range and
+    return EVERY match with its unambiguous address. match is exact,
     contains, or regex (timeout-guarded, so a pathological pattern refuses
     instead of hanging); look_in is values, formulas, or both; a formula
-    cell's searchable value is its last cached one. Results page with limit
-    and offset and report the total match count. Read-only; works while the
-    file is open in Excel."""
+    cell's searchable value is its last cached one, and a value Excel shows
+    as other text carries that text in shows. Results page with limit and
+    offset and report the total match count. Read-only; works while the file
+    is open in Excel."""
     return _search.find_cells(
         path, query, look_in=look_in, match=match, match_case=match_case,
         sheet=sheet, location=location, limit=limit, offset=offset)
 
 
-@_tool("lite")
+@_op
 def replace_cells(path: str, find: str, replace: str, look_in: str = "values",
                   match: str = "contains", match_case: bool = False,
                   sheet: str | None = None,
@@ -1088,23 +1089,22 @@ def replace_cells(path: str, find: str, replace: str, look_in: str = "values",
 # ------------------------------------------------------------ scatter cells
 
 
-@_tool("lite")
+@_op
 def get_cells(path: str, cells: _schemas.CellAddresses, values: str = "cached",
               sheet: str | None = None) -> dict:
-    """Read many individually addressed cells in one call, the scatter
-    complement to the rectangular read_range. cells is a list of A1 strings
-    or location objects, each resolving to ONE cell (1,000-cell ceiling);
-    values is cached, formula, or both, and every returned value carries
-    the honest label (cached, absent, formula, value), so a formula with no
-    cached value is never passed off as blank. Read-only; works while the
-    file is open in Excel."""
+    """Read many individually addressed cells in one call, the scatter complement
+    to the rectangular read_range. cells is a list of A1 strings or location
+    objects, each resolving to ONE cell (1,000-cell ceiling); values is
+    cached, formula, both, or displayed (the text Excel shows), labelled and
+    with shows as in read_range, so a formula with no cached value is never
+    passed off as blank. Read-only; works while the file is open in Excel."""
     return _cells.get_cells(path, cells, values=values, sheet=sheet)
 
 
-@_tool("lite")
+@_op
 def set_cells(path: str, cells: _schemas.CellWrites, sheet: str | None = None,
-              allow_loss: bool = False, backup: bool = True,
-              verify_com: bool | None = None) -> dict:
+              echo_cells: bool = False, allow_loss: bool = False,
+              backup: bool = True, verify_com: bool | None = None) -> dict:
     """Write many individually addressed cells as ONE atomic batch, the
     scatter complement to write_range. cells is a list of {cell, value}
     items (cell is an A1 string or a location object resolving to one cell;
@@ -1113,14 +1113,15 @@ def set_cells(path: str, cells: _schemas.CellWrites, sheet: str | None = None,
     become formulas, normalized. A hazardous workbook refuses unless
     allow_loss is true. Auto-backup to .ks4xl-backups; atomic verified
     save. Refuses while open in Excel."""
-    return _cells.set_cells(path, cells, sheet=sheet, allow_loss=allow_loss,
-                            backup=backup, verify_com=verify_com)
+    with _package.echo_cells(echo_cells):
+        return _cells.set_cells(path, cells, sheet=sheet, allow_loss=allow_loss,
+                                backup=backup, verify_com=verify_com)
 
 
 # ------------------------------------------------------------- style layer
 
 
-@_tool("design")
+@_op
 def apply_style(path: str, style: str,
                 location: _schemas.OptionalLocation = None,
                 define: dict | None = None, sheet: str | None = None,
@@ -1139,7 +1140,7 @@ def apply_style(path: str, style: str,
         allow_loss=allow_loss, backup=backup, verify_com=verify_com)
 
 
-@_tool("design")
+@_op
 def copy_format(path: str, source: _schemas.SourceLocation,
                 dest: _schemas.DestLocation, sheet: str | None = None,
                 allow_loss: bool = False, backup: bool = True,
@@ -1156,7 +1157,7 @@ def copy_format(path: str, source: _schemas.SourceLocation,
                                    verify_com=verify_com)
 
 
-@_tool("design")
+@_op
 def audit_styles(path: str, top: int = 10) -> dict:
     """Read-only style-bloat audit against Excel's 64,000 distinct-format
     ceiling: counts from the styles.xml registry (cell formats, fonts,
@@ -1169,19 +1170,19 @@ def audit_styles(path: str, top: int = 10) -> dict:
     return _format.audit_styles(path, top=top)
 
 
-# ============================== OBJECTS, PROTECTION, PAGE LAYOUT TOOLS
-# File-tier families: objects (images and charts on the
-# openpyxl model, with the observed-round-trip story), protection, page
+# =========================================== OBJECTS, PROTECTION, INSPECTORS
+# Ungated file-tier families: objects (images and charts on the
+# openpyxl model, with the observed-round-trip gate story), protection, page
 # layout and headers/footers, the read-side inspectors (external links, VBA,
 # pivots, connections), and the multi-sheet export_file. Sparklines are an x14
-# in-sheet extension openpyxl does not model, so they are not faked here.
-# No em dashes.
+# in-sheet extension openpyxl does not model; that tool is deferred to the COM
+# tier, not faked here.
 
 
 # ------------------------------------------------------------------ objects
 
 
-@_tool("design")
+@_op
 def manage_image(path: str, action: str, image_file: str | None = None,
                  location: _schemas.OptionalLocation = None,
                  sheet: str | None = None, width: int | None = None,
@@ -1189,9 +1190,9 @@ def manage_image(path: str, action: str, image_file: str | None = None,
                  out_dir: str | None = None, allow_loss: bool = False,
                  backup: bool = True, verify_com: bool | None = None) -> dict:
     """Manage cell-anchored images. action is insert (image_file, location as
-    the anchor cell, optional width and height in pixels), list (read-only:
-    every image with its sheet, index, anchor, size, and format), delete
-    (sheet plus index from list or location as the anchor cell), or extract
+    the cell the image sits on, optional width and height in pixels), list
+    (read-only: every image with its sheet, 1-based index, at_cell, size, and
+    format), delete (sheet plus index from list, or location as its cell), or extract
     (write every embedded image into out_dir; read-only).
 
     Round-trip honesty: images survive a file-based save because Pillow is
@@ -1209,12 +1210,12 @@ def manage_image(path: str, action: str, image_file: str | None = None,
         allow_loss=allow_loss, backup=backup, verify_com=verify_com)
 
 
-@_tool("design")
+@_op
 def manage_chart(path: str, action: str, chart_type: str | None = None,
                  data: _schemas.ChartRange = None,
                  categories: _schemas.ChartRange = None,
                  title: str | None = None, x_title: str | None = None,
-                 y_title: str | None = None, anchor: str | None = None,
+                 y_title: str | None = None, at_cell: str | None = None,
                  sheet: str | None = None, index: int | None = None,
                  titles_from_data: bool = True, show_axes: bool = True,
                  allow_loss: bool = False, backup: bool = True,
@@ -1223,9 +1224,11 @@ def manage_chart(path: str, action: str, chart_type: str | None = None,
     bar_horizontal, line, pie, doughnut, area, scatter), data (a location
     object; its first row supplies series titles unless titles_from_data is
     false, and scatter uses the first column as x values), optional
-    categories, title, x_title, y_title, and an anchor cell (default just
-    right of the data). list reports each chart's sheet, index, type,
-    title, and anchor; delete takes sheet plus index or title.
+    categories, title, x_title, y_title, and at_cell, the cell the chart's
+    top-left corner sits on (default just right of the data; the old name
+    anchor is still accepted). list reports each chart's sheet, 1-based
+    index, chart_type, title, at_cell and the ranges each series plots;
+    delete takes sheet plus index or title.
 
     Axes are drawn by default. Pass show_axes false for a bare plot area
     with no category or value axis; pie and doughnut have no axes either
@@ -1242,7 +1245,7 @@ def manage_chart(path: str, action: str, chart_type: str | None = None,
     return _objects.manage_chart(
         path, action, chart_type=chart_type, data=data,
         categories=categories, title=title, x_title=x_title,
-        y_title=y_title, anchor=anchor, sheet=sheet, index=index,
+        y_title=y_title, anchor=at_cell, sheet=sheet, index=index,
         titles_from_data=titles_from_data, show_axes=show_axes,
         allow_loss=allow_loss, backup=backup, verify_com=verify_com)
 
@@ -1250,7 +1253,7 @@ def manage_chart(path: str, action: str, chart_type: str | None = None,
 # --------------------------------------------------------------- protection
 
 
-@_tool("io")
+@_op
 def set_protection(path: str, action: str, sheet: str | None = None,
                    password: str | None = None, options: dict | None = None,
                    unlock_ranges: _schemas.RangeList = None, locked: bool = False,
@@ -1261,16 +1264,20 @@ def set_protection(path: str, action: str, sheet: str | None = None,
     """Advisory workbook and sheet protection. action is sheet (protect one
     sheet; options maps per-option names like format_cells, insert_rows,
     sort, auto_filter to true = allowed while protected; optional
-    password), workbook (lock the structure and optionally windows,
-    optional password), unlock (mark unlock_ranges as exceptions that stay
-    editable under protection; locked true relocks them), remove (scope
-    sheet, workbook, or all), or status (read-only report of every lock).
+    password; unlock_ranges leaves those cells editable), workbook (lock
+    the structure and optionally windows, optional password), unlock (mark
+    unlock_ranges as exceptions that stay editable under protection; locked
+    true relocks them), remove (scope sheet, workbook, or all), or status
+    (read-only report of every lock and each sheet's unlocked ranges). An
+    argument the action does not use is refused. Every other write honours
+    the protection: a locked cell, or a change the sheet's options do not
+    allow, refuses PROTECTED.
 
     Honesty: xlsx protection is tamper DISCOURAGEMENT, not security. The
     password is stored as the legacy ECMA-376 hash Excel checks in its UI;
     the file stays a readable zip and any tool can strip the lock. Real
     encryption is a different mechanism and needs the Excel application
-    (com_save_with_password, com pack). Auto-backup to
+    (com_save_with_password, xl_app). Auto-backup to
     .ks4xl-backups; atomic verified save. Refuses while open in Excel."""
     return _protection.set_protection(
         path, action, sheet=sheet, password=password, options=options,
@@ -1282,7 +1289,7 @@ def set_protection(path: str, action: str, sheet: str | None = None,
 # -------------------------------------------------------------- page layout
 
 
-@_tool("io")
+@_op
 def set_page_layout(path: str, sheet: str | None = None,
                     orientation: str | None = None,
                     paper_size: _schemas.PaperSize = None,
@@ -1315,7 +1322,7 @@ def set_page_layout(path: str, sheet: str | None = None,
         backup=backup, verify_com=verify_com)
 
 
-@_tool("io")
+@_op
 def set_header_footer(path: str, sheet: str | None = None,
                       header: dict | None = None, footer: dict | None = None,
                       apply_to: str = "odd", raw: bool = False,
@@ -1337,7 +1344,7 @@ def set_header_footer(path: str, sheet: str | None = None,
 # ---------------------------------------------------- read-side inspectors
 
 
-@_tool("io")
+@_op
 def get_external_links(path: str) -> dict:
     """List external workbook links, read-only: each link's target path from
     its relationship, the sheet names it references, and the cached cell
@@ -1350,7 +1357,7 @@ def get_external_links(path: str) -> dict:
     return _inspectors.get_external_links(path)
 
 
-@_tool("io")
+@_op
 def inspect_vba(path: str) -> dict:
     """Read-only VBA inspection: whether the workbook carries a
     vbaProject.bin, its size and declared content type, and the module
@@ -1363,83 +1370,86 @@ def inspect_vba(path: str) -> dict:
     return _inspectors.inspect_vba(path)
 
 
-@_tool("io")
+@_op
 def get_pivot(path: str, sheet: str | None = None) -> dict:
     """Describe existing pivot tables, read-only: each pivot's sheet and
     location, source sheet and range, cache field list, row, column, data,
     and page fields by name, cache record count, who refreshed it last and
     when, and the refresh-on-load flag. Description only, stated honestly:
     creating, refreshing, or deleting a pivot needs the Excel application
-    (com_manage_pivot, com pack), while file-based edits elsewhere in the
+    (com_manage_pivot, xl_app), while file-based edits elsewhere in the
     workbook preserve the pivot parts. Works while the file is open in
     Excel."""
     return _inspectors.get_pivot(path, sheet=sheet)
 
 
-@_tool("io")
+@_op
 def get_connections(path: str) -> dict:
     """List data connections and Power Query presence, read-only: each
     connection's name, type, connection string or URL, command, and
     refresh-on-load flag from the connections part, plus DataMashup
     evidence for Power Query and any legacy query-table parts. Connection
     strings can embed server names and credentials, so the output is
-    marked sensitive. Refreshing a connection is not offered in v1 (a
-    com-pack refresh tool is queued; pivot refresh already lives in
-    com_manage_pivot). Works while the file is open in Excel."""
+    marked sensitive. This server does not refresh a data connection;
+    pivot refresh lives in xl_app com_manage_pivot. Works while the file is
+    open in Excel."""
     return _inspectors.get_connections(path)
 
 
 # -------------------------------------------------------------- export_file
 
 
-@_tool("io")
+@_op
 def export_file(path: str, fmt: str = "csv", sheets: _schemas.SheetNames = None,
                 out_dir: str | None = None, out_file: str | None = None,
                 header: bool = True, values: str = "cached",
-                records: bool = False, overwrite: bool = False) -> dict:
-    """Export whole sheets to a CSV/TSV file set or one JSON bundle, the
-    multi-sheet complement to export_range. sheets picks a subset. csv/tsv
-    write one file per sheet into out_dir, or return text inline; json is
-    one bundle keyed by sheet (out_file or inline; records=true emits row
-    objects). Targets are guarded: never the source workbook, a workbook
-    extension, or .ks4xl-backups; existing files need overwrite=true (a
-    timestamped .bak is kept first). values is cached | formula | both.
-    Read-only; the workbook never changes."""
+                records: bool = False, overwrite: bool = False,
+                bom: bool = True) -> dict:
+    """Export whole sheets (sheets picks some) to CSV/TSV files in out_dir,
+    one per sheet, or to one JSON bundle keyed by sheet (out_file;
+    records=true gives row objects); with no target the text returns
+    inline. values is cached, formula, both or displayed. CSV/TSV files
+    start with a UTF-8 byte-order mark unless bom=false. A target is never
+    the workbook or .ks4xl-backups; an existing file needs overwrite=true
+    and keeps a .bak. Read-only."""
     return _dataio.export_file(
         path, fmt=fmt, sheets=sheets, out_dir=out_dir, out_file=out_file,
-        header=header, values=values, records=records, overwrite=overwrite)
+        header=header, values=values, records=records, overwrite=overwrite,
+        bom=bom)
 
 
-# ============================== FORMULAS, VALIDATE, BACKUPS, PROPERTIES TOOLS
-# File-tier tools: the formula pair (write with fill, the read-side audit),
-# the multiplex validate battery, workflow recipes, backup management over
-# the safesave slots, document properties with the calc-settings surface,
-# and sheet-view state. Every mutation runs through WorkbookPackage. No em
-# dashes. The COM tier registers below under the env-gated com pack.
+# ===================================== FORMULAS, VALIDATE, WORKFLOWS, BACKUPS
+# Ungated file-tier tools on the audited engine: the formula pair (write with
+# fill, the read-side audit), the multiplex validate checker, workflow
+# recipes, backup management over the safesave slots, document properties
+# with the calc-settings surface, and sheet-view state. Every mutation runs
+# through WorkbookPackage. The COM tier registers below under the env-gated
+# com pack.
 
 
 # ----------------------------------------------------------------- formulas
 
 
-@_tool("lite")
+@_op
 def set_formula(path: str, location: _schemas.Location, formula: str,
-                sheet: str | None = None, allow_loss: bool = False,
-                backup: bool = True,
+                sheet: str | None = None, echo_cells: bool = False,
+                allow_loss: bool = False, backup: bool = True,
                 verify_com: bool | None = None) -> dict:
     """Write a formula to a single cell, or fill a range where each cell gets
     the formula with its relative references shifted by that cell's offset
     (Excel copy semantics; absolute $ anchors stay put). Formulas are
     normalized so modern functions do not land as #NAME?, and the workbook
     is flagged to recalculate on its next open; stored cached results stay
-    stale until then (the recalculate tool in the com pack populates them).
+    stale until then (the recalculate op in xl_app populates them).
     Auto-backup to .ks4xl-backups; atomic verified save. Refuses while open
     in Excel."""
-    return _formulas.set_formula(path, location, formula, sheet=sheet,
-                                 allow_loss=allow_loss, backup=backup,
+    with _package.echo_cells(echo_cells):
+        return _formulas.set_formula(path, location, formula, sheet=sheet,
+                                     allow_loss=allow_loss, backup=backup,
                                      verify_com=verify_com)
 
 
-@_tool("lite")
+@_op
 def audit_formulas(path: str, location: _schemas.OptionalLocation = None,
                    sheet: str | None = None) -> dict:
     """Read-only formula intelligence for a range, one sheet (sheet alone), or
@@ -1461,7 +1471,7 @@ def audit_formulas(path: str, location: _schemas.OptionalLocation = None,
 # --------------------------------------------------- validation and workflow
 
 
-@_tool("lite")
+@_op
 def validate(path: str, checks: list[str] | None = None) -> dict:
     """Run read-only correctness checks and return one report. checks (default
     ['structure', 'references', 'calc_staleness']): structure (package
@@ -1479,47 +1489,45 @@ def validate(path: str, checks: list[str] | None = None) -> dict:
     return _validation.validate(path, checks=checks)
 
 
-@_tool("lite")
+@_op
 def get_workflows(task: str | None = None) -> dict:
     """Recommended tool sequences for common multi-step spreadsheet tasks, each
-    step naming the tool, the rationale, and the pack it lives in (lite is
-    always on; enable_tools loads the rest). Call with no task to list the
-    available tasks (merge-workbooks, report-build, data-cleanup,
-    formatting-audit-and-fix, safe-edit-of-rich-workbook,
-    migrate-from-incumbent); call with task='<name>' for that task's
-    step-by-step recipe and notes. Steps naming COM-tier tools that have
-    not shipped yet are marked forthcoming rather than pretended present.
-    Pure guidance: reads nothing, changes nothing."""
+    step naming the tool and op to call and the rationale. Call with no task
+    to list the available tasks (recover-workbook, merge-workbooks,
+    report-build, data-cleanup, formatting-audit-and-fix,
+    safe-edit-of-rich-workbook, migrate-from-incumbent, migrate-from-v1);
+    call with task='<name>' for that task's step-by-step recipe and notes.
+    migrate-from-v1 carries the full map from every 1.x tool to its 2.0
+    tool and op. Pure guidance: reads nothing, changes nothing."""
     return _workflows.get_workflows(task)
 
 
 # ------------------------------------------------------------------ backups
 
 
-@_tool("lite")
+@_op
 def manage_backups(action: str, path: str | None = None,
                    directory: str | None = None, source: str | None = None,
                    scope: str | None = None, dry_run: bool = True,
                    label: str | None = None,
                    dest_dir: str | None = None) -> dict:
     """Manage the automatic backups in the hidden .ks4xl-backups folder next to
-    each mutated workbook: two rotating slots per file, prev (state before
-    the most recent mutation) and anchor (session start). action='list':
-    slot files with sizes and mtimes plus orphaned slot folders; give path
-    for one workbook or directory for a folder. action='restore': overwrite
-    path with source 'prev' or 'anchor'; the current content rotates into
-    prev FIRST so a restore is itself undoable, the payload is validated as
-    a real workbook before the atomic replace, and files open in Excel
-    refuse. action='purge': delete backups; scope is 'orphans' (slot
-    folders whose workbook is gone) or 'slots' (one workbook's pair);
-    dry_run defaults to TRUE and only reports. action='snapshot': save a
-    permanent DTG-stamped copy, YYYYMMDD_HHMM_<name>, optional label and
-    dest_dir; snapshots are never rotated and no purge scope touches
-    them. LIMIT, stated loudly: prev holds the state before the LAST
-    mutation this server made, so damage that lands AFTER the last save
-    (crash, disk, another program) costs that final edit; only a snapshot
-    habit covers it. Lost or corrupt file? get_workflows
-    task='recover-workbook' is the walkthrough."""
+    each edited workbook: prev (the state before the latest edit) and anchor
+    (session start). action='list': slots, snapshots and orphaned slot
+    folders, for path (one workbook) or directory. action='restore':
+    overwrite path with source 'prev', 'anchor' or a snapshot label; the
+    current content rotates into prev first, so a restore is undoable, the
+    copy is validated as a workbook first, and a file open in Excel refuses.
+    Deleting a sheet, rows, columns or table rows, clearing cells, a merge
+    that discards values, a replace and a protection change also keep a copy
+    labelled "pre-<op> <time>", named in their result as snapshot (newest 20
+    kept). action='purge': delete backups; scope 'orphans' (folders whose
+    workbook is gone) or 'slots' (one workbook's pair); dry_run defaults to
+    TRUE. action='snapshot': a permanent DTG-stamped copy,
+    YYYYMMDD_HHMM_<name>, optional label and dest_dir; never rotated or
+    purged. Damage after the last save (a crash, another program) is not in
+    prev; only a snapshot covers it. Lost or corrupt file? get_workflows
+    task='recover-workbook'."""
     return _backups.manage_backups(
         action, path=path, directory=directory, source=source, scope=scope,
         dry_run=dry_run, label=label, dest_dir=dest_dir)
@@ -1528,7 +1536,7 @@ def manage_backups(action: str, path: str | None = None,
 # ------------------------------------------------------- properties and view
 
 
-@_tool("lite")
+@_op
 def set_workbook_properties(path: str, title: str | None = None,
                             author: str | None = None,
                             subject: str | None = None,
@@ -1545,12 +1553,12 @@ def set_workbook_properties(path: str, title: str | None = None,
                             verify_com: bool | None = None) -> dict:
     """Set core document properties (title, author, subject, keywords,
     category, comments) and calc settings: calc_mode ('auto',
-    'autoNoTable', 'manual'), full_calc_on_load, and iterative calculation
-    (iterative_calc with max_iterations and max_change bounds for circular
-    references). Only given parameters change; with none it reports current
-    values read-only. Manual mode means no recalc on Excel open, so caches
-    go stale; the result says so. Auto-backup; atomic verified save.
-    Refuses while open in Excel."""
+    'auto_no_table', 'manual'), full_calc_on_load, iterative_calc with
+    max_iterations and max_change. Only given parameters change; with none
+    it reports current values read-only. An email address is never written
+    as the author; your own name is set instead. Manual mode skips recalc on
+    open, so caches go stale; the result says so. Auto-backup; atomic
+    verified save. Refuses while open in Excel."""
     return _properties.set_workbook_properties(
         path, title=title, author=author, subject=subject, keywords=keywords,
         category=category, comments=comments, calc_mode=calc_mode,
@@ -1559,7 +1567,7 @@ def set_workbook_properties(path: str, title: str | None = None,
         allow_loss=allow_loss, backup=backup, verify_com=verify_com)
 
 
-@_tool("lite")
+@_op
 def set_view(path: str, sheet: str | None = None, freeze: str | None = None,
              split: dict | None = None, gridlines: bool | None = None,
              headings: bool | None = None, zoom: int | None = None,
@@ -1587,28 +1595,27 @@ def set_view(path: str, sheet: str | None = None, freeze: str | None = None,
 # through one COM worker thread, alert-suppressed, timeout-bounded, PID-
 # journaled; NEVER attaches to the user's Excel session and refuses files
 # Excel holds open. VBA stays preserve/inspect only: no macro authoring and
-# no macro execution. No em
-# dashes.
+# no macro execution (com_run_macro is deferred from v1).
 
 
-@_tool("com")
+@_op
 def recalculate(path: str, engine: str = "auto",
                 timeout_seconds: float | None = None,
-                backup: bool = True) -> dict:
-    """Fidelity recalculation. engine='com' (or 'auto' where Excel exists)
-    opens the workbook in a private hidden Excel, issues an explicit
-    CalculateFull (required: open-time calc does not fire under manual
-    calculation mode), saves, and reports how many formula cells gained
-    cached values; after it, stored results are freshly computed by Excel.
-    engine='formulas' is a best-effort pure-Python compute of classic
-    functions that returns values WITHOUT modifying the file. Auto-backup;
-    refuses while the file is open in Excel."""
+                backup: bool = True, allow_network: bool = False) -> dict:
+    """Recalculate in a private hidden Excel: engine='com' (or 'auto' where
+    Excel exists) runs an explicit CalculateFull, saves, reports how many
+    formula cells gained cached values, and names any circular reference.
+    engine is 'auto' or 'com'; 'formulas' was removed in 2.0.0 and is refused.
+    Auto-backup; refuses while the file is open in Excel.
+    allow_network: Let Excel contact the internet for this workbook's
+    network functions. Set it only after the user has agreed, for this
+    workbook."""
     return _comtier.recalculate(path, engine=engine,
                                 timeout_seconds=timeout_seconds,
-                                backup=backup)
+                                backup=backup, allow_network=allow_network)
 
 
-@_tool("com")
+@_op
 def com_manage_pivot(path: str, action: str, name: str | None = None,
                      source_sheet: str | None = None,
                      source_range: str | None = None,
@@ -1618,7 +1625,7 @@ def com_manage_pivot(path: str, action: str, name: str | None = None,
                      filters: list[str] | None = None,
                      values: list[dict] | None = None,
                      timeout_seconds: float | None = None,
-                     backup: bool = True) -> dict:
+                     backup: bool = True, allow_network: bool = False) -> dict:
     """Create, refresh, delete, or list REAL pivot tables through Excel
     (never a fake static table). action='create': source_range must include
     a header row; rows/columns/filters name header fields; values is a list
@@ -1632,144 +1639,176 @@ def com_manage_pivot(path: str, action: str, name: str | None = None,
     Excel instance, serialized and timeout-bounded (timeout_seconds,
     default 60); mutations auto-backup and verify; Excel's own error text
     is surfaced when it refuses (a wrong field name, an invalid source).
-    Refuses while the file is open in your Excel."""
+    Refuses while the file is open in your Excel.
+    allow_network: Let Excel contact the internet for this workbook's
+    network functions. Set it only after the user has agreed, for this
+    workbook."""
     return _comtier.com_manage_pivot(
         path, action, name=name, source_sheet=source_sheet,
         source_range=source_range, dest_sheet=dest_sheet,
         dest_cell=dest_cell, rows=rows, columns=columns, filters=filters,
-        values=values, timeout_seconds=timeout_seconds, backup=backup)
+        values=values, timeout_seconds=timeout_seconds, backup=backup,
+        allow_network=allow_network)
 
 
-@_tool("com")
+@_op
 def com_export_pdf(path: str, output: str, scope: str = "workbook",
                    sheet: str | None = None, range_a1: str | None = None,
                    overwrite: bool = False,
-                   timeout_seconds: float | None = None) -> dict:
+                   timeout_seconds: float | None = None,
+                   allow_network: bool = False) -> dict:
     """Export to PDF via Excel's real renderer. scope='workbook' (every
     sheet), 'sheet' (one sheet, name via sheet), or 'range' (sheet plus
     range_a1 like 'A1:F40'). output must be a .pdf path; an existing file
     refuses unless overwrite:true. Read-only on the workbook (nothing is
     saved); the produced PDF is checked non-empty. Runs in a private
-    hidden Excel instance, serialized and timeout-bounded."""
+    hidden Excel.
+    allow_network: Let Excel contact the internet for this workbook's
+    network functions. Set it only after the user has agreed, for this
+    workbook."""
     return _comtier.com_export_pdf(
         path, output, scope=scope, sheet=sheet, range_a1=range_a1,
-        overwrite=overwrite, timeout_seconds=timeout_seconds)
+        overwrite=overwrite, timeout_seconds=timeout_seconds,
+        allow_network=allow_network)
 
 
-@_tool("com")
+@_op
 def com_render_sheet(path: str, output: str, sheet: str | None = None,
                      range_a1: str | None = None, overwrite: bool = False,
-                     timeout_seconds: float | None = None) -> dict:
+                     timeout_seconds: float | None = None,
+                     allow_network: bool = False) -> dict:
     """Render a sheet's used range (or range_a1) to a PNG image exactly as
     Excel displays it: formatting, conditional formats, charts in range,
-    and sparklines included. Use it to visually verify edits without
-    opening Excel by hand. output must be a .png path; existing files
+    and sparklines included. output must be a .png path; existing files
     refuse unless overwrite:true. Read-only on the workbook, in a private
-    hidden Excel instance, serialized and timeout-bounded. A picture that
-    comes back blank is a refusal naming com_export_pdf, never an ok."""
+    hidden Excel. A picture that comes back blank is a refusal naming
+    com_export_pdf, never an ok.
+    allow_network: Let Excel contact the internet for this workbook's
+    network functions. Set it only after the user has agreed, for this
+    workbook."""
     return _comtier.com_render_sheet(
         path, output, sheet=sheet, range_a1=range_a1, overwrite=overwrite,
-        timeout_seconds=timeout_seconds)
+        timeout_seconds=timeout_seconds, allow_network=allow_network)
 
 
-@_tool("com")
+@_op
 def com_convert_format(path: str, output: str, format: str | None = None,
                        overwrite: bool = False,
-                       timeout_seconds: float | None = None) -> dict:
+                       timeout_seconds: float | None = None,
+                       allow_network: bool = False) -> dict:
     """Convert a workbook between formats via Excel's own SaveAs: xlsx,
     xlsm, xlsb, xls, csv (UTF-8; first worksheet's values only, by the
     format's nature), or ods. format defaults from the output extension;
     the source file is never overwritten. The produced file is checked
-    non-empty. Runs in a private hidden Excel instance, serialized and
-    timeout-bounded; refuses while the source is open in Excel elsewhere
-    only if locked."""
+    non-empty. Runs in a private hidden Excel; refuses if the source is
+    locked.
+    allow_network: Let Excel contact the internet for this workbook's
+    network functions. Set it only after the user has agreed, for this
+    workbook."""
     return _comtier.com_convert_format(
         path, output, format=format, overwrite=overwrite,
-        timeout_seconds=timeout_seconds)
+        timeout_seconds=timeout_seconds, allow_network=allow_network)
 
 
-@_tool("com")
+@_op
 def com_save_with_password(path: str, password: str,
                            current_password: str | None = None,
                            timeout_seconds: float | None = None,
-                           backup: bool = True) -> dict:
+                           backup: bool = True,
+                           allow_network: bool = False) -> dict:
     """Password-protect a workbook with Excel's REAL encryption (the whole
     package is encrypted, unlike the advisory set_protection). password=''
     with current_password removes it; current_password also opens an
     already-encrypted file for re-keying. The password is NOT recoverable,
-    and every file-based tool refuses encrypted files, so keep the backup
-    (auto-rotated before the save). Runs in a private hidden Excel
-    instance, serialized and timeout-bounded."""
+    and every file-based tool refuses encrypted files, so keep the backup.
+    Runs in a private hidden Excel.
+    allow_network: Let Excel contact the internet for this workbook's
+    network functions. Set it only after the user has agreed, for this
+    workbook."""
     return _comtier.com_save_with_password(
         path, password, current_password=current_password,
-        timeout_seconds=timeout_seconds, backup=backup)
+        timeout_seconds=timeout_seconds, backup=backup,
+        allow_network=allow_network)
 
 
-@_tool("com")
+@_op
 def com_autofit(path: str, sheet: str | None = None,
                 columns: str | None = None, rows: str | None = None,
                 timeout_seconds: float | None = None,
-                backup: bool = True) -> dict:
+                backup: bool = True, allow_network: bool = False) -> dict:
     """True column and row autofit using Excel's real text metrics (the
     file tier can only estimate widths). Default: every used column on the
     sheet; columns like 'A:D' or 'C', rows like '1:20'. Auto-backup;
     verified save; runs in a private hidden Excel instance, serialized and
-    timeout-bounded; refuses while the file is open in Excel."""
+    timeout-bounded; refuses while the file is open in Excel.
+    allow_network: Let Excel contact the internet for this workbook's
+    network functions. Set it only after the user has agreed, for this
+    workbook."""
     return _comtier.com_autofit(
         path, sheet=sheet, columns=columns, rows=rows,
-        timeout_seconds=timeout_seconds, backup=backup)
+        timeout_seconds=timeout_seconds, backup=backup,
+        allow_network=allow_network)
 
 
-@_tool("com")
+@_op
 def com_goal_seek(path: str, target_cell: str, target_value: float,
                   changing_cell: str, sheet: str | None = None,
                   save: bool = True, timeout_seconds: float | None = None,
-                  backup: bool = True) -> dict:
+                  backup: bool = True, allow_network: bool = False) -> dict:
     """Excel's Goal Seek: adjust changing_cell until the formula in
     target_cell reaches target_value. Convergence-checked: a non-converging
     seek refuses and nothing is saved. save:false reports the solution
     without persisting it. Auto-backup on save; runs in a private hidden
-    Excel instance, serialized and timeout-bounded; refuses while the file
-    is open in Excel."""
+    Excel; refuses while the file is open in Excel.
+    allow_network: Let Excel contact the internet for this workbook's
+    network functions. Set it only after the user has agreed, for this
+    workbook."""
     return _comtier.com_goal_seek(
         path, target_cell, target_value, changing_cell, sheet=sheet,
-        save=save, timeout_seconds=timeout_seconds, backup=backup)
+        save=save, timeout_seconds=timeout_seconds, backup=backup,
+        allow_network=allow_network)
 
 
-@_tool("com")
+@_op
 def com_set_sparkline(path: str, action: str = "create",
                       location: str | None = None, source: str | None = None,
                       type: str = "line", sheet: str | None = None,
                       timeout_seconds: float | None = None,
-                      backup: bool = True) -> dict:
-    """Create, clear, or list sparkline groups through Excel (they live in
-    worksheet XML the file tier cannot round-trip, so Excel owns them).
+                      backup: bool = True, allow_network: bool = False) -> dict:
+    """Create, clear, or list sparkline groups through Excel.
     action='create': location is the cell/range that shows them (e.g.
     'G2:G10'), source the data range (e.g. 'A2:F10'), type 'line',
     'column', or 'win_loss'. 'clear' removes groups in location; 'list'
     inventories sheet, or the workbook when no sheet is named. Auto-backup
-    on mutations; private hidden Excel, serialized, timeout-bounded."""
+    on mutations; private hidden Excel.
+    allow_network: Let Excel contact the internet for this workbook's
+    network functions. Set it only after the user has agreed, for this
+    workbook."""
     return _comtier.com_set_sparkline(
         path, action=action, location=location, source=source, type=type,
-        sheet=sheet, timeout_seconds=timeout_seconds, backup=backup)
+        sheet=sheet, timeout_seconds=timeout_seconds, backup=backup,
+        allow_network=allow_network)
 
 
-@_tool("com")
+@_op
 def com_validate_opens_clean(path: str, password: str | None = None,
-                             timeout_seconds: float | None = None) -> dict:
+                             timeout_seconds: float | None = None,
+                             allow_network: bool = False) -> dict:
     """The authoritative corruption smoke test: open the file in a private
     hidden Excel and report whether it is accepted WITHOUT a repair prompt
     (a repair demand surfaces as a refusal carrying Excel's own message).
-    Read-only. Also runs inside file-tier saves as the verify_com option,
-    which KS4XL_VERIFY_COM=1 turns on for every save. password opens
-    encrypted files; without one an encrypted file reports encrypted, and a
-    wrong one refuses at once with Excel's own message.
-    Serialized and timeout-bounded."""
+    Read-only; also the verify_com option of file-tier saves. password
+    opens encrypted files; without one it reports encrypted, and a wrong
+    one refuses at once.
+    allow_network: Let Excel contact the internet for this workbook's
+    network functions. Set it only after the user has agreed, for this
+    workbook."""
     return _comtier.com_validate_opens_clean(
-        path, password=password, timeout_seconds=timeout_seconds)
+        path, password=password, timeout_seconds=timeout_seconds,
+        allow_network=allow_network)
 
 
-@_tool("com")
+@_op
 def com_status() -> dict:
     """Honest COM layer status: whether Excel COM is available on this
     machine, worker and pooled-instance state, journaled Excel PIDs, the
@@ -1780,148 +1819,369 @@ def com_status() -> dict:
     return _comtier.com_status()
 
 
-# ------------------------------------------------ tiered loading (Section 9)
-# Registered LAST: enable_tools' docstring carries the pack menu with
-# per-pack token bills computed from the live registry, so every other tool
-# must already be registered when this block runs.
-
-_PENDING_VISIBILITY: list[tuple[set[str], bool]] = []
-
-
-def _record_visibility(names: set[str], enabled: bool) -> None:
-    """packs.py visibility hook: bookkeeping flips queue here; the async
-    enable_tools/disable_tools bodies apply them session-scoped, and main()
-    folds startup flips into the global transform instead."""
-    _PENDING_VISIBILITY.append((set(names), enabled))
+# ------------------------------------------------------- the update ops
+# The per-product half of core/update_flow.py (the family module): two
+# thin ops in xl_app, a tool that is already not read-only, so the
+# client's own permission prompt for it is the human check. Both refuse on
+# Business, and the surface plan leaves them off the Business tool list.
 
 
-_packs.set_visibility_hook(_record_visibility)
+def _update_op(fn, *args):
+    from .core import update_flow
+    from .core.errors import SurfaceRefusal
+
+    try:
+        return fn(*args)
+    except update_flow.UpdateRefused as exc:
+        raise SurfaceRefusal(exc.code, exc.message, hint=exc.hint) from None
 
 
-async def _apply_session_visibility(ctx) -> None:
-    """Session-scoped toggles: fastmcp 3.x session visibility rules override
-    the startup global transform (later marks win) and send
-    ToolListChangedNotification to this session only. ctx=None (in-process
-    callers, unit tests) drains the queue without applying; packs
-    bookkeeping stays authoritative either way."""
-    pending = list(_PENDING_VISIBILITY)
-    _PENDING_VISIBILITY.clear()
-    if ctx is None:
-        return
-    for names, enabled in pending:
-        if enabled:
-            await ctx.enable_components(names=names)
-        else:
-            await ctx.disable_components(names=names)
-
-
-async def enable_tools(
-    packs: list[str], ctx: _Context | None = None
-) -> dict:
-    result = _packs.enable(packs)
-    await _apply_session_visibility(ctx)
-    return result
-
-
-async def disable_tools(
-    packs: list[str], ctx: _Context | None = None
-) -> dict:
-    result = _packs.disable(packs)
-    await _apply_session_visibility(ctx)
-    return result
-
-
-_MENU_LINES = "\n".join(
-    f"- {name} (~{_packs.pack_cost(name) / 1000:.1f}k): "
-    f"{_packs.PACK_SUMMARIES[name]}"
-    for name in _packs.pack_names()
-)
-
-_TASK_MAP = (
-    "Task map: conditional formatting, data validation, named styles, "
-    "images, charts, advanced table ops, named ranges -> design; page "
-    "layout, headers/footers, protection, comments, whole-file export, "
-    "external links, VBA, pivot and connection info -> io; recalculate, "
-    "real pivots, PDF, render, convert, encrypt, autofit, sparklines, "
-    "goal seek -> com."
-)
-
-enable_tools.__doc__ = (
-    "Enable optional tool packs mid-session (sessions start lite). "
-    "Idempotent; reports tokens added. packs = names below or "
-    "['everything']; disable_tools reverses it. Refuses under "
-    "KS4XL_PACK_POLICY=locked. " + _TASK_MAP + "\nPacks:\n" + _MENU_LINES
-)
-
-disable_tools.__doc__ = (
-    "Disable previously enabled tool packs for this session and reclaim "
-    "their context; the lite core always stays on. Idempotent. The result "
-    "reports the packs just disabled, the approximate tokens removed, and "
-    "the remaining surface. packs takes the same names as enable_tools (its "
-    "description carries the menu) or ['everything']. Calling a tool from a "
-    "disabled pack does not dead-end: the refusal names the owning pack and "
-    "the exact enable_tools call to turn it back on. Refuses when the host "
-    "pins the surface with KS4XL_PACK_POLICY=locked."
-)
-
-enable_tools = _tool("lite")(enable_tools)
-disable_tools = _tool("lite")(disable_tools)
-
-
-def _startup_disabled_names() -> set[str]:
-    """Tool names hidden at startup under current packs bookkeeping."""
-    return {
-        name
-        for members in _packs.tool_names().values()
-        for name in members
-        if not _packs.is_tool_enabled(name)
-    }
-
-
-def _bad_mode_message() -> str:
-    """The one line a bad KS4XL_MODE prints before the process exits.
-
-    The vocabulary is read out of packs.py rather than spelled here, so a
-    re-cut of the pack menu cannot leave this sentence naming packs that no
-    longer exist.
+@_op
+def update_now() -> dict:
+    """Install the newer version the update notice named; call only when the user asks or
+    agrees. Takes no arguments and acts only on the newer stable version
+    the server's own check found. Where the app can show a dialog, the
+    user confirms there first; a Claude Desktop install opens Desktop's own
+    install window. The install runs in the background: the answer comes
+    within about 30 seconds, or says it is still running and the next
+    answer reports the outcome, with what to do to start using it.
     """
-    vocabulary = ", ".join(["lite", "full", _packs.EVERYTHING, *_packs.pack_names()])
-    return (
-        f'KS4XL_MODE="{_os.environ.get("KS4XL_MODE", "")}" is not a '
-        f"recognized mode. Valid values: {vocabulary}, or a comma-separated "
-        "list of pack names. The server did not start."
-    )
+    from .core import update_flow
+
+    return _update_op(update_flow.update_now)
+
+
+@_op
+def update_notices(action: Literal["on", "off", "status"]) -> dict:
+    """Turn update notices on or off, or show their status (action). The
+    setting is kept in the server's state folder, so it survives updates
+    and applies to every app that starts this server. off stops the
+    notices and keeps the weekly check; status also reports the last
+    notice and the newer version, if one is known.
+    """
+    from .core import update_flow
+
+    return _update_op(update_flow.update_notices, action)
+
+
+# ------------------------------------------------------------ the server
+
+
+def instructions_for(policy) -> str:
+    """Product instructions with the licensing components around them: the
+    adapter's introduction first, its licensing instructions last (the order
+    the released core used)."""
+    from .surface import copy as _copy
+
+    text = policy.initialization_text()
+    return text["introduction"] + _copy.INSTRUCTIONS + " " + text["instructions"]
+
+
+def create_server(settings=None):
+    """Build the server. Raises PolicySetupError or SettingsError; never
+    returns a half-configured server. The tool list is computed once here
+    and never changes during the session."""
+    from fastmcp import FastMCP
+
+    from .settings import Settings
+    from .surface import plan as _surface_plan
+    from .surface.tools import make_tool
+
+    policy = _license_policy.active()
+    settings = Settings.from_env() if settings is None else settings
+    plan = _surface_plan.build(settings)  # validates KS4XL_FORBID names
+    _runtime.set_plan(plan)
+    # version=: without it the MCP handshake reports fastmcp's own version
+    # as serverInfo.version.
+    mcp = FastMCP(name=policy.product_id, instructions=instructions_for(policy),
+                  version=policy.distribution_version)
+    for tool_plan in plan.tools.values():
+        mcp.add_tool(make_tool(tool_plan, plan))
+    from . import envelope as _envelope
+
+    mcp.add_middleware(_envelope.unknown_tool_middleware(plan))
+    # The policy's optional registration hook, offered after every core op
+    # is registered; both shipped policies decline it. A tool it did add
+    # would be registered here, at start, so the list stays fixed.
+    _license_policy.register_additional_tools(mcp)
+    _fixed_list(mcp)
+    return mcp
+
+
+def _fixed_list(mcp) -> None:
+    """Advertise no list-changed notifications: the tool list is fixed for
+    the session. fastmcp 3.4.7 hard-codes tools_changed=True on its
+    stdio path; this pins every notification option off
+    (tests/unit/test_family_stdio.py checks the capability on the wire)."""
+    from mcp.server.lowlevel.server import NotificationOptions
+
+    low = mcp._mcp_server  # noqa: SLF001 (pinned fastmcp; covered by the wire test)
+    original = low.create_initialization_options
+
+    def fixed(notification_options=None, **kwargs):
+        return original(notification_options=NotificationOptions(), **kwargs)
+
+    low.create_initialization_options = fixed
+
+
+#: The most one log record may put on stderr.
+LOG_LINE_CHARS = 300
+
+#: How many log lines may wait for stderr before new ones are dropped.
+LOG_QUEUE_LINES = 256
+
+
+class _NonBlockingStderr:
+    """A logging handler that never makes the server wait on stderr.
+
+    Each record is one short line, but a client that pipes stderr and
+    never reads it still fills the 4 KB Windows pipe buffer after about 36
+    unknown requests before initialize, and the next write then blocked the
+    server's only loop: no answer, not even to initialize (reproduced with
+    80 requests). Lines now go through a bounded queue to a
+    daemon writer thread. The server's loop only ever enqueues; when the
+    queue is full the line is dropped and counted (`dropped`).
+
+    The writer writes with os.write on its own duplicate of file descriptor
+    2, never through sys.stderr: a
+    thread stuck in sys.stderr.write holds that stream's buffer lock, and at
+    interpreter shutdown Python waits for the lock, then writes a fatal
+    error to the same full pipe and never exits. A thread stuck in os.write
+    holds no Python lock, so the exit does not wait on it."""
+
+    def __init__(self, stream=None, maxsize: int = LOG_QUEUE_LINES):
+        import logging
+        import queue
+        import threading
+
+        class _Handler(logging.Handler):
+            def emit(inner, record: logging.LogRecord) -> None:
+                try:
+                    line = inner.format(record) + "\n"
+                except Exception:  # noqa: BLE001 (logging must never raise)
+                    return
+                try:
+                    self.queue.put_nowait(line)
+                except queue.Full:
+                    self.dropped += 1
+
+            def handleError(inner, record) -> None:  # noqa: N802 (logging API)
+                # The default prints a traceback to stderr: the very write
+                # this handler exists to avoid.
+                self.dropped += 1
+
+        self.queue: "queue.Queue[str]" = queue.Queue(maxsize)
+        self.dropped = 0
+        self.stream = stream
+        self.fd: int | None = None
+        if stream is None:
+            try:
+                self.fd = _os.dup(_sys.stderr.fileno())  # not inheritable
+            except Exception:  # noqa: BLE001 (no real stderr: write through the object)
+                self.fd = None
+        self.handler = _Handler()
+        self.thread = threading.Thread(target=self._drain, daemon=True,
+                                       name="ks4xl-stderr-writer")
+        self.thread.start()
+
+    def _drain(self) -> None:
+        while True:
+            line = self.queue.get()
+            try:
+                if self.fd is not None:
+                    data = line.encode("utf-8", "replace")
+                    while data:
+                        data = data[_os.write(self.fd, data):]
+                else:
+                    stream = self.stream if self.stream is not None else _sys.stderr
+                    stream.write(line)
+                    stream.flush()
+            except Exception:  # noqa: BLE001 (a closed stderr is not the server's fault)
+                pass
+            finally:
+                self.queue.task_done()
+
+    def flush(self, bound: float = 1.0) -> None:
+        """Wait up to `bound` seconds for queued lines to reach stderr: the
+        queue empty AND the line in hand written. An empty queue alone let
+        the process exit while the writer still held the last line, so a
+        client that reads stderr lost it. A stderr nobody reads costs this
+        one bounded wait."""
+        import time as _time
+
+        end = _time.monotonic() + bound
+        # unfinished_tasks counts every line put and not yet written
+        # (task_done runs after the write), so there is no gap between the
+        # writer taking a line and finishing it.
+        while self.queue.unfinished_tasks and _time.monotonic() < end:
+            _time.sleep(0.01)
+
+
+#: The installed writer, for the exit flush and the tests.
+_STDERR_WRITER: _NonBlockingStderr | None = None
+
+
+def _hooks_to_logging() -> None:
+    """Python's own last-resort writers
+    (an exception nobody could raise, an exception that ended a thread, a
+    warning) wrote to sys.stderr directly, so on a full pipe they could stop
+    the loop exactly as an unread stderr did. They now go through logging,
+    one line each, to the same non-blocking writer."""
+    import logging
+    import threading
+
+    log = logging.getLogger("xlsx_mcp")
+
+    def unraisable(u) -> None:
+        log.warning("unraisable %s: %s (%s)", type(u.exc_value).__name__,
+                    u.exc_value, u.err_msg or "in a finalizer")
+
+    def thread_ended(args) -> None:
+        if args.exc_type is SystemExit:
+            return
+        name = args.thread.name if args.thread is not None else "a thread"
+        log.warning("%s ended on %s: %s", name, args.exc_type.__name__, args.exc_value)
+
+    _sys.unraisablehook = unraisable
+    threading.excepthook = thread_ended
+    logging.captureWarnings(True)
+
+
+def _bound_stderr_logging() -> _NonBlockingStderr:
+    """One short line on stderr per log record, never a traceback, and
+    never a wait on stderr (_NonBlockingStderr).
+
+    The mcp library logs a request that fails validation through the root
+    logger (logging.warning), which configures a default handler on first
+    use. For one unknown method before initialize that was a 6,379-byte
+    pydantic dump. A client that pipes stderr and never reads it (a 4 KB
+    pipe buffer on Windows) blocks the server on that write, and the server
+    then answers nothing: the server "goes silent". Every record reaching the
+    root logger, and fastmcp's own logger, is now one line, clipped, with no
+    exception text, handed to a writer thread that may fall behind or stall
+    without stopping the server."""
+    import logging
+
+    global _STDERR_WRITER
+
+    class _OneLine(logging.Formatter):
+        def format(self, record: logging.LogRecord) -> str:
+            try:
+                text = record.getMessage()
+            except Exception:  # noqa: BLE001 (a bad format string is still one line)
+                text = str(record.msg)
+            lines = text.strip().splitlines() or [""]
+            line = f"{record.levelname}:{record.name}:{lines[0]}"
+            if len(lines) > 1:
+                line += f" (+{len(lines) - 1} lines not shown)"
+            if len(line) > LOG_LINE_CHARS:
+                line = line[:LOG_LINE_CHARS - 3] + "..."
+            return line
+
+    if _STDERR_WRITER is None:
+        _STDERR_WRITER = _NonBlockingStderr()
+        # Whatever path the process leaves by (a crash, a SystemExit
+        # outside main's own finally), queued lines get the same bounded
+        # chance to reach a client that reads stderr.
+        import atexit
+
+        atexit.register(_STDERR_WRITER.flush, 1.0)
+    writer = _STDERR_WRITER
+    _hooks_to_logging()
+    writer.handler.setFormatter(_OneLine())
+    # The root logger (the mcp library's request warnings) and fastmcp's own
+    # logger (its rich handlers write to stderr directly, and it does not
+    # propagate) both go through the one non-blocking writer, and so do
+    # captured warnings (py.warnings).
+    for logger in (logging.getLogger(), logging.getLogger("fastmcp")):
+        for handler in list(logger.handlers):
+            if handler is not writer.handler:
+                logger.removeHandler(handler)
+        if writer.handler not in logger.handlers:
+            logger.addHandler(writer.handler)
+    return writer
+
+
+def _recover_at_start(settings) -> list[str]:
+    """Put back every workbook that a save which did not finish left aside
+    (a server stopped in the middle of a save). A read-only
+    server changes nothing on disk, so it leaves that to the next server
+    that may write. Never fails the start."""
+    if getattr(settings, "read_only", False):
+        return []
+    try:
+        from .core import safesave as _safesave_mod
+        return _safesave_mod.recover_interrupted_saves()
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _legacy_notice(settings) -> None:
+    """Retired settings set to an old default are accepted and ignored, with
+    ONE line on stderr naming them (never their values), written only after
+    every setting has been validated and the surface built."""
+    names = tuple(getattr(settings, "legacy_set", ()))
+    if not names:
+        return
+    from .surface import copy as _copy
+
+    _sys.stderr.write("[kitchensink4xl] "
+                      + _copy.LEGACY_SETTING_NOTICE.replace("{names}", ", ".join(names)) + "\n")
+    _sys.stderr.flush()
 
 
 def main() -> None:
-    # KS4XL_MODE startup surface: bookkeeping first (a typo in the env fails
-    # loudly BEFORE serving), then ONE global visibility transform hiding
-    # every tool not enabled at startup. Session rules laid down by
-    # enable_tools/disable_tools override this transform. Applied here, not
-    # at import, so tests and measure_surface always see the full registry.
-    # A typo used to exit with a twelve-line traceback wrapping a genuinely
-    # good message, which Desktop renders as "server failed to start" with
-    # the useful sentence buried under a file path the user does not
-    # recognize. Same loudness, same refusal to serve, one readable line.
-    # The policy pin is validated first, exactly as apply_startup_mode does
-    # it, so a KS4XL_PACK_POLICY typo keeps its own separate refusal.
-    _packs.pack_policy()
+    from .settings import Settings, SettingsError
+
     try:
-        _packs.apply_startup_mode()
-    except _XlMcpError:
-        _sys.stderr.write(_bad_mode_message() + "\n")
-        raise SystemExit(2)
-    _PENDING_VISIBILITY.clear()  # startup flips ride the global transform
-    disabled = _startup_disabled_names()
-    if disabled:
-        mcp.add_transform(_Visibility(False, names=disabled))
-    # No update check here. It runs ON DEMAND, inside get_server_info, and
-    # nowhere else: startup starts no thread and asks PyPI nothing.
+        settings = Settings.from_env()
+        mcp = create_server(settings)
+    except _license_policy.PolicySetupError as exc:
+        _sys.stderr.write(str(exc) + "\n")
+        _sys.stderr.flush()
+        raise SystemExit(2) from None
+    except SettingsError as exc:
+        # One readable line, never a traceback: Desktop shows "server failed
+        # to start" and buries anything longer. Flushed here, before the exit:
+        # the line is the whole answer for a client that reads stderr.
+        _sys.stderr.write(f"[kitchensink4xl] {exc} The server did not start.\n")
+        _sys.stderr.flush()
+        raise SystemExit(2) from None
+    _legacy_notice(settings)
+    # Put back any workbook a save which did not finish left
+    # aside (a server stopped mid-save). A read-only server changes nothing.
+    _recover_at_start(settings)
+    # No update check here: startup starts no thread and asks PyPI nothing.
+    # The weekly check starts in the background after a tool call
+    # (core/update_check.maybe_refresh_in_background).
     # The one-time star nudge, last, after startup has already succeeded.
     # It is a single line on stderr on the very first run of an install and
     # nothing at all thereafter; it asks the network nothing.
     _star_nudge.announce_once()
-    mcp.run()
+    _bound_stderr_logging()
+    # The framework banner has its own PyPI checker, independent of our off
+    # switch; keep startup offline in both editions.
+    try:
+        mcp.run(transport="stdio", show_banner=False)
+    finally:
+        # The client went away. Calls that never committed are
+        # cancelled, and every call still running gets a bounded wait to
+        # finish and release its hidden Excel; nothing is ended here.
+        from .surface import dispatch as _dispatch
+
+        _dispatch.drain_inflight()
+        _stop_update_child()
+        if _STDERR_WRITER is not None:
+            # Give queued log lines a moment to reach a stderr that is being
+            # read; a stderr nobody reads costs this one bounded second.
+            _STDERR_WRITER.flush(1.0)
+
+
+def _stop_update_child() -> None:
+    """An update child still running when the client goes away is killed."""
+    flow = _sys.modules.get("xlsx_mcp.core.update_flow")
+    if flow is not None:
+        flow.shutdown()
 
 
 if __name__ == "__main__":

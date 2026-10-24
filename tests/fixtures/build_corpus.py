@@ -1,4 +1,4 @@
-"""Build the fixture corpus: real workbooks that carry the fragile
+"""Build the Phase 1 fixture corpus: real workbooks that carry the fragile
 parts the hazard scan and fidelity harness are proven against.
 
 Two tiers:
@@ -32,7 +32,7 @@ import zlib
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-CORPUS = HERE / "samples"
+CORPUS = HERE / "workbooks"
 sys.path.insert(0, str(HERE.parents[1] / "src"))
 
 
@@ -165,6 +165,14 @@ def _synth_macro_xlsm() -> Path:
                               'ContentType="application/vnd.ms-office.'
                               'vbaProject"/>')
                     txt = txt.replace("</Types>", inject + "</Types>")
+                # a macro-enabled workbook has the macro-enabled type, as
+                # Excel requires for a file named .xlsm
+                txt = txt.replace(
+                    "spreadsheetml.sheet.main+xml",
+                    "ms-excel.sheet.macroEnabled.main+xml").replace(
+                    "application/vnd.openxmlformats-officedocument."
+                    "ms-excel.sheet.macroEnabled.main+xml",
+                    "application/vnd.ms-excel.sheet.macroEnabled.main+xml")
                 data = txt.encode("utf-8")
             zout.writestr(item, data)
         # a placeholder VBA blob; enough for the part-name scan and the
@@ -263,7 +271,7 @@ def build_com_tier() -> list[str]:
         _save_close(app, wb, "macro.xlsm", fmt=FMT_XLSM)
 
     # ---------------------------------------------- fidelity-gate fixtures
-    # Part types the corpus lacked before the adversarial + fidelity gate.
+    # Part types the corpus lacked.
     # Each one exercises a claim in core/hazard.py's knowledge table that no
     # Excel-authored fixture had tested: x14 (extLst) conditional formatting
     # lives INSIDE a surviving part, dynamic-array spills need xl/metadata.xml
@@ -360,9 +368,10 @@ def build_com_tier() -> list[str]:
 # the authoring folder, a threaded comment's xl/persons/ registry (display
 # name + Windows Live userId), and a query table's source path. The corpus
 # lives inside the repo, so every rebuild would otherwise commit the
-# builder's name and local paths. Every fixture is scrubbed after it is
-# built, and the scrub is idempotent so it can be run over an existing
-# corpus.
+# author's real name and local paths into a deliberately pseudonymized
+# project. Every fixture is
+# scrubbed after it is built, and the scrub is idempotent so it can be run
+# over an existing corpus.
 
 SCRUB_NAME = "KS4XL Fixture Builder"
 _SCRUB_PATTERNS: tuple[tuple[str, str], ...] = (

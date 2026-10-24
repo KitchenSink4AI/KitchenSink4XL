@@ -1,20 +1,19 @@
-"""Regressions for COM process safety and failure reporting.
+"""Regressions for the live COM stress findings.
+Every one of these is pure Python: the original repros drove real
+Excel, and these pin the same properties without it so they run in CI and on
+a machine where Excel is closed.
 
-Every one of these is pure Python: they pin the same properties as the live
-Excel checks without Excel, so they run in CI and on a machine where Excel
-is closed.
-
-  * the startup journal sweep kills only a PID whose process identity
-    still matches what was journaled (the PID-reuse case is a NO-KILL).
-  * a com_error from inside an operation body is translated, and an Excel
-    that DIED mid-call is CONFLICT, not BAD_PARAMS.
-  * timeout_seconds is the whole wait: the restart-transient reap runs
-    after the refusal is raised, not before it.
-  * the documented per-call verify_com is reachable from every mutating
-    tool and arrives at package.save.
-  * oversize cell text refuses at the static layer with the measured
-    limit in the message, not through the post-write verify.
-  * the encrypted-file refusal does not tell callers to expect a stall.
+  -    the startup journal sweep kills only a PID whose process identity
+       still matches what was journaled (the PID-reuse repro is a NO-KILL).
+  -    a com_error from inside an operation body is translated, and an Excel
+       that DIED mid-call is CONFLICT, not BAD_PARAMS.
+  -    timeout_seconds is the whole wait: the restart-transient reap runs
+       after the refusal is raised, not before it.
+  -    the documented per-call verify_com is reachable from every mutating
+       tool and arrives at package.save.
+  -    oversize cell text refuses at the static layer with the measured
+       limit in the message, not through the post-write verify.
+  -    the encrypted-file refusal no longer tells callers to expect a stall.
 """
 
 from __future__ import annotations
@@ -56,7 +55,7 @@ def _md5(path: str) -> str:
 class _FakeComError(Exception):
     """The shape pywin32 hands back, and the shape that leaked. str() on a
     multi-argument exception is the ARGS TUPLE REPR, which is exactly the
-    '(-2147023170, ...)' that used to land in the envelope's message."""
+    '(-2147023170, ...)' that landed in the envelope's message."""
 
     def __init__(self, hresult: int, text: str, excepinfo=None):
         super().__init__(hresult, text, excepinfo, None)
@@ -99,7 +98,7 @@ def test_pid_reuse_is_a_no_kill(tmp_path, monkeypatch):
     monkeypatch.setattr(inst, "pid_alive", lambda pid: True)
     monkeypatch.setattr(inst, "taskkill", lambda pid: killed.append(pid) or True)
 
-    # The stand-in for an "Excel this server never spawned" is a
+    # The stand-in for "Excel this server never spawned" is a
     # process that genuinely exists (identity is only readable off a live
     # process): this one, wearing a journal record whose recorded creation
     # time belongs to the long-dead Excel that first held the PID.
@@ -146,7 +145,7 @@ def test_legacy_record_falls_back_to_the_old_behaviour(tmp_path, monkeypatch):
 
 
 def test_startup_journal_sweep_spares_a_recycled_pid(tmp_path, monkeypatch):
-    """The same thing through the code path used at startup: the
+    """The same thing through the code path actually used: the
     ComExecutor startup sweep over an ABANDONED record (owning server gone)
     whose PID now names somebody else's Excel."""
     killed: list[int] = []
@@ -201,7 +200,7 @@ def test_rpc_call_failed_has_plain_english():
 
 def test_a_dead_excel_is_not_bad_params():
     """classify() landed the died-mid-call case on BAD_PARAMS, telling an
-    unattended client its arguments were wrong when the process had
+    unattended caller its arguments were wrong when the process had
     died. It will not retry that; it will 'fix' a correct call."""
     exc = _FakeComError(-2147023170, "The remote procedure call failed.")
     wrapped = _comtier._wrap_com_error(exc, "running recalculate")
@@ -325,20 +324,16 @@ def test_shutdown_joins_the_background_reap(monkeypatch, tmp_path):
 
 
 def _mutating_tools():
-    import asyncio
+    # Family surface: each op's own argument schema (what xl_help serves
+    # and what the dispatcher validates against).
+    from xlsx_mcp import registry, server  # noqa: F401
+    from xlsx_mcp.surface.help import args_schema
 
-    from xlsx_mcp import server
-
-    tools = asyncio.run(server.mcp._list_all_tools()) \
-        if hasattr(server.mcp, "_list_all_tools") else None
-    if tools is None:
-        from xlsx_mcp import packs
-        tools = [t for reg in packs._REGISTRY.values() for t in reg.values()]
     out = {}
-    for t in tools:
-        props = (getattr(t, "parameters", {}) or {}).get("properties", {})
+    for name, spec in registry.public_ops().items():
+        props = args_schema(spec).get("properties", {})
         if "allow_loss" in props:
-            out[t.name] = props
+            out[name] = props
     return out
 
 

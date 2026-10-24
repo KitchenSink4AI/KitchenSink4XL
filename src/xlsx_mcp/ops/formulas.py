@@ -20,15 +20,18 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from openpyxl.utils.cell import coordinate_to_tuple
+
 from ..core import calc as _calc
 from ..core import refs as _refs
-from ..core.errors import RangeOutOfBounds, XlMcpError
+from ..core import sharedformulas as _shared
+from ..core.errors import CeilingExceeded, XlMcpError
 from ..core.package import WorkbookPackage
 from . import gridio
 
 #: Filling more cells than this in one set_formula call refuses; apply_edits
 #: or several calls are the bulk route (matches the write ceiling).
-MAX_FILL_CELLS = gridio.MAX_READ_CELLS
+MAX_FILL_CELLS = gridio.MAX_WRITE_CELLS
 
 #: Excel's documented always-recalculate functions.
 VOLATILE_FUNCS = frozenset({
@@ -45,7 +48,7 @@ ERROR_VALUES = frozenset({
 STALENESS_NOTE = (
     "stored cached results are stale until a real recalculation; the "
     "workbook is flagged to recalculate on its next open in Excel or "
-    "LibreOffice, or run the recalculate tool (com pack) to populate "
+    "LibreOffice, or run the recalculate op (xl_app) to populate "
     "the cache now")
 
 _STRING_RE = re.compile(r'"(?:[^"]|"")*"')
@@ -70,12 +73,18 @@ def set_formula(path: str, location: Any, formula: str,
     backup + one verified save; the result carries the staleness note."""
     if not isinstance(formula, str) or not formula.strip():
         raise XlMcpError("formula must be a non-empty string")
+    if not formula.strip().lstrip("=").strip():
+        raise XlMcpError(
+            "set_formula was given an empty formula (only an equals sign, "
+            f"{formula!r}), so nothing was written. Pass the formula itself, "
+            "for example \"=SUM(A1:A5)\"; to store the text \"=\", use set_cell "
+            "with the value \"=\", and to empty the cell use clear_range.")
     raw = formula if formula.startswith("=") else "=" + formula
     pkg = WorkbookPackage.open(path)
     grid = pkg.resolve(location, default_sheet=sheet)
     n = (grid.max_row - grid.min_row + 1) * (grid.max_col - grid.min_col + 1)
     if n > MAX_FILL_CELLS:
-        raise RangeOutOfBounds(
+        raise CeilingExceeded(
             f"the resolved range {grid.a1} covers {n:,} cells, over the "
             f"{MAX_FILL_CELLS:,}-cell fill ceiling; split the fill")
     for r in range(grid.min_row, grid.max_row + 1):
@@ -178,7 +187,8 @@ def audit_formulas(path: str, location: Any = None,
                 # audit_formulas and read_range disagree about the same cell:
                 # =_xlfn.LAMBDA(_xlpm.x,_xlop.y,...) here against
                 # =LAMBDA(x,[y],...) there, so an agent that read one and
-                # wrote back the other got a different result. 'formula' stays the STORED text (this is an audit),
+                # wrote back the other got a different result. 'formula'
+                # stays the STORED text (this is an audit),
                 # and 'formula_display' is what read_range returns and what
                 # Excel's own formula bar shows.
                 display = _calc.denormalize_formula(text)
@@ -227,11 +237,25 @@ def audit_formulas(path: str, location: Any = None,
         }
         if unknown_sheets:
             result["unknown_sheet_references"] = sorted(unknown_sheets)
+        broken: list[dict] = []
+        for title, coords in _shared.broken_cells(path).items():
+            if title not in {w.title for w in worksheets}:
+                continue
+            for coord in coords:
+                if rect is not None:
+                    r, c = coordinate_to_tuple(coord)
+                    if not (rect.min_row <= r <= rect.max_row
+                            and rect.min_col <= c <= rect.max_col):
+                        continue
+                broken.append({"sheet": title, "cell": coord})
+        if broken:
+            result["broken_shared_formulas"] = {
+                **_capped(broken), "note": _shared.NOTE}
         if missing_cached:
             result["warning"] = (
                 f"{len(missing_cached)} formula cell(s) have NO cached "
                 "value and read as blank to every non-Excel consumer; "
-                "run the recalculate tool (com pack) or open in Excel "
+                "run the recalculate op (xl_app) or open in Excel "
                 "to populate them")
         return result
     finally:

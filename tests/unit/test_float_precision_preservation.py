@@ -1,10 +1,11 @@
-"""Regressions for numeric precision preservation on save.
+"""Regressions for float precision preservation.
 
-Any server edit used to silently snap untouched 17-significant-digit
+Any server edit silently snapped untouched 17-significant-digit
 Excel-authored doubles by 1 ulp (openpyxl's %.16g float writer); the save
 spine now restores the original numeric text of every cell the operation
-did not write. A 17-digit WRITE refuses (verify-after-write, correct) and
-the message names the cells, the precision cause and the two remedies.
+did not write. A 17-digit WRITE refuses (verify-after-write, correct)
+but the message named neither the cells nor the precision cause; it now
+names both and the two remedies.
 """
 
 from __future__ import annotations
@@ -73,6 +74,7 @@ def _make_fullprec_book(path: Path) -> Path:
 
 
 class TestUntouchedNumberPreservation:
+    @pytest.mark.usefixtures("rewrite_route")
     def test_unrelated_set_cell_preserves_full_precision(self, tmp_path):
         # The report's minimized repro: a write to C9 must not rewrite A1.
         book = _make_fullprec_book(tmp_path / "prec.xlsx")
@@ -142,6 +144,7 @@ class TestUntouchedNumberPreservation:
 
 
 class TestFullPrecisionWriteRefusal:
+    @pytest.mark.usefixtures("rewrite_route")
     def test_refusal_names_cell_and_precision_cause(self, tmp_path):
         book = _make_fullprec_book(tmp_path / "f1.xlsx")
         before = book.read_bytes()
@@ -151,7 +154,11 @@ class TestFullPrecisionWriteRefusal:
         msg = str(ei.value)
         assert "B5" in msg
         assert "17 significant digits" in msg
-        assert "COM" in msg
+        # The advice no longer sends
+        # the caller to the COM tier, which writes no cells; it says to round,
+        # or to write the cell in a call of its own (which stores all 17).
+        assert "15 significant digits" in msg and "COM" not in msg
+        assert "xl_app" not in msg and "a call of its own" in msg
         assert "NOT modified" in msg
         assert book.read_bytes() == before
 
